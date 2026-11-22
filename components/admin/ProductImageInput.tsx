@@ -1,10 +1,14 @@
 
 'use client';
 
-import { useState, type ChangeEvent } from 'react';
+import {
+  useState,
+  type ChangeEvent,
+} from 'react';
+
 import {
   Upload,
-  Link as LinkIcon,
+  Link2,
   ImageIcon,
   Loader2,
   X,
@@ -19,10 +23,15 @@ export default function ProductImageInput({
   value,
   onChange,
 }: ProductImageInputProps) {
-  const [mode, setMode] = useState<'url' | 'upload'>('upload');
+  const [mode, setMode] = useState<'upload' | 'url'>(
+    'upload'
+  );
+
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const [previewFailed, setPreviewFailed] = useState(false);
+
+  // IMAGE UPLOAD
 
   const handleFileUpload = async (
     event: ChangeEvent<HTMLInputElement>
@@ -41,13 +50,15 @@ export default function ProductImageInput({
     ];
 
     if (!allowedTypes.includes(file.type)) {
-      setError('Only JPG, PNG, WebP and GIF are allowed.');
+      setError(
+        'Only JPG, PNG, WebP and GIF images are allowed.'
+      );
       event.target.value = '';
       return;
     }
 
     if (file.size > 10 * 1024 * 1024) {
-      setError('Image must be smaller than 10 MB.');
+      setError('Maximum image size is 10 MB.');
       event.target.value = '';
       return;
     }
@@ -63,11 +74,13 @@ export default function ProductImageInput({
         body: formData,
       });
 
-      const data = await response.json();
+      const data = await response
+        .json()
+        .catch(() => ({}));
 
       if (!response.ok || !data.success || !data.url) {
         throw new Error(
-          data.error || 'Image upload failed'
+          data.error || 'Failed to upload image.'
         );
       }
 
@@ -77,7 +90,7 @@ export default function ProductImageInput({
       setError(
         err instanceof Error
           ? err.message
-          : 'Unable to upload image'
+          : 'Image upload failed.'
       );
     } finally {
       setUploading(false);
@@ -85,8 +98,19 @@ export default function ProductImageInput({
     }
   };
 
+  // REMOVE IMAGE
+
+  const removeImage = () => {
+    onChange('');
+    setError('');
+    setPreviewFailed(false);
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="w-full min-w-0 space-y-5">
+
+      {/* IMAGE SOURCE OPTIONS */}
+
       <div className="grid grid-cols-2 gap-2">
         <button
           type="button"
@@ -94,10 +118,10 @@ export default function ProductImageInput({
             setMode('upload');
             setError('');
           }}
-          className={`flex items-center justify-center gap-2 border px-3 py-3 text-sm font-semibold transition ${
+          className={`flex min-w-0 items-center justify-center gap-2 rounded-md border px-2 py-3 text-xs font-semibold transition sm:text-sm ${
             mode === 'upload'
-              ? 'bg-black text-white border-black'
-              : 'bg-white text-gray-700 border-gray-300'
+              ? 'border-black bg-black text-white'
+              : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
           }`}
         >
           <Upload size={16} />
@@ -110,19 +134,21 @@ export default function ProductImageInput({
             setMode('url');
             setError('');
           }}
-          className={`flex items-center justify-center gap-2 border px-3 py-3 text-sm font-semibold transition ${
+          className={`flex min-w-0 items-center justify-center gap-2 rounded-md border px-2 py-3 text-xs font-semibold transition sm:text-sm ${
             mode === 'url'
-              ? 'bg-black text-white border-black'
-              : 'bg-white text-gray-700 border-gray-300'
+              ? 'border-black bg-black text-white'
+              : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
           }`}
         >
-          <LinkIcon size={16} />
+          <Link2 size={16} />
           Image URL
         </button>
       </div>
 
+      {/* UPLOAD IMAGE */}
+
       {mode === 'upload' ? (
-        <div className="border-2 border-dashed border-gray-300 p-6 text-center">
+        <div className="rounded-lg border-2 border-dashed border-gray-300 p-5 text-center sm:p-8">
           {uploading ? (
             <div className="flex flex-col items-center gap-3">
               <Loader2
@@ -135,110 +161,163 @@ export default function ProductImageInput({
               </p>
             </div>
           ) : (
-            <label className="cursor-pointer flex flex-col items-center gap-3">
+            <label className="flex cursor-pointer flex-col items-center gap-3">
               <Upload
                 size={30}
                 className="text-gray-500"
               />
 
-              <span className="font-semibold text-sm">
-                Click to upload image
+              <span className="text-sm font-semibold">
+                Choose Image From Computer
               </span>
 
               <span className="text-xs text-gray-500">
-                JPG, PNG, WebP or GIF — Max 10 MB
+                JPG, PNG, WebP, GIF — Max 10 MB
               </span>
 
               <input
                 type="file"
                 accept="image/jpeg,image/png,image/webp,image/gif"
                 onChange={handleFileUpload}
-                className="hidden"
+                className="sr-only"
                 disabled={uploading}
               />
             </label>
           )}
         </div>
       ) : (
-        <div>
-          <label className="block text-xs font-bold tracking-wider text-gray-600 mb-2">
+        <div className="space-y-2">
+          <label
+            htmlFor="product-image-url"
+            className="block text-xs font-bold tracking-wider text-gray-600"
+          >
             IMAGE URL
           </label>
 
           <input
+            id="product-image-url"
             type="url"
-            value={value.startsWith('/uploads/') ? '' : value}
-            onChange={(e) => {
+            value={
+              value.startsWith('/uploads/')
+                ? ''
+                : value
+            }
+            onChange={(event) => {
+              onChange(event.target.value);
+              setError('');
               setPreviewFailed(false);
-              onChange(e.target.value);
             }}
             placeholder="https://example.com/product.jpg"
-            className="w-full border border-gray-300 px-3 py-3 text-sm focus:outline-none focus:border-black"
+            className="w-full min-w-0 rounded-md border border-gray-300 px-3 py-3 text-sm outline-none focus:border-black"
           />
 
-          <p className="text-xs text-gray-500 mt-2">
-            Paste a direct image link.
-          </p>
-
           {value.startsWith('/uploads/') && (
-            <p className="text-xs text-gray-500 mt-2">
-              Current image was uploaded locally.
-              Enter a new URL to replace it.
+            <p className="text-xs text-gray-500">
+              Current image was uploaded from your
+              computer. Enter a URL to replace it.
             </p>
           )}
         </div>
       )}
 
+      {/* ERROR MESSAGE */}
+
       {error && (
         <div
           role="alert"
-          className="bg-red-50 border border-red-200 text-red-700 p-3 text-sm"
+          className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700"
         >
           {error}
         </div>
       )}
 
-      {value && (
-        <div className="border border-gray-200 p-4">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-bold text-gray-600">
-              IMAGE PREVIEW
-            </p>
+      {/* AUTOMATIC RESPONSIVE IMAGE PREVIEW */}
 
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-gray-50 px-4 py-3">
+          <span className="flex items-center gap-2 text-xs font-bold tracking-wider">
+            <ImageIcon size={16} />
+            PRODUCT IMAGE PREVIEW
+          </span>
+
+          {value && (
             <button
               type="button"
-              onClick={() => {
-                onChange('');
-                setPreviewFailed(false);
-                setError('');
-              }}
-              className="flex items-center gap-1 text-xs text-red-600"
+              onClick={removeImage}
+              disabled={uploading}
+              className="flex items-center gap-1 text-xs font-semibold text-red-600 hover:text-red-800"
             >
               <X size={14} />
-              Remove
+              Remove Image
             </button>
-          </div>
+          )}
+        </div>
 
-          {previewFailed ? (
-            <div className="flex items-center gap-2 text-sm text-red-600">
-              <ImageIcon size={18} />
-              Image preview unavailable
-            </div>
-          ) : (
+        <div
+          className="
+            relative
+            mx-auto
+            flex
+            aspect-square
+            w-full
+            max-w-lg
+            items-center
+            justify-center
+            overflow-hidden
+            bg-white
+            p-3
+            sm:p-5
+            md:p-6
+          "
+        >
+          {value && !previewFailed ? (
             <img
               key={value}
               src={value}
               alt="Product preview"
-              className="w-full max-h-60 object-contain bg-gray-50"
+              loading="lazy"
+              draggable={false}
               onError={() => setPreviewFailed(true)}
+              className="
+                block
+                h-full
+                w-full
+                max-h-full
+                max-w-full
+                object-contain
+                object-center
+              "
+              style={{
+                objectFit: 'contain',
+                objectPosition: 'center',
+              }}
             />
-          )}
+          ) : (
+            <div className="flex flex-col items-center justify-center gap-2 text-center text-gray-400">
+              <ImageIcon size={32} />
 
-          <p className="text-xs text-gray-500 mt-3 break-all">
+              <span className="text-xs">
+                {previewFailed
+                  ? 'Unable to load image preview'
+                  : 'Product image will appear here'}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {value && (
+          <p className="break-all border-t border-gray-100 px-4 py-3 text-xs text-gray-500">
             {value}
           </p>
-        </div>
-      )}
+        )}
+      </div>
+
+      <p className="text-center text-xs text-gray-500">
+        Image automatically adjusts to the available
+        space while keeping its original proportions.
+        No cropping or stretching.
+      </p>
     </div>
   );
 }

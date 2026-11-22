@@ -1,6 +1,30 @@
+
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { z } from 'zod';
+
+// Accept both external image URLs and locally uploaded images.
+const imageUrlSchema = z.string().refine(
+  (value) => {
+    if (/^\/uploads\/[a-zA-Z0-9._-]+$/.test(value)) {
+      return true;
+    }
+
+    try {
+      const url = new URL(value);
+      return (
+        url.protocol === 'https:' ||
+        url.protocol === 'http:'
+      );
+    } catch {
+      return false;
+    }
+  },
+  {
+    message:
+      'Image must be an HTTP(S) URL or a valid /uploads/ path.',
+  }
+);
 
 const createProductSchema = z.object({
   name: z.string().min(1),
@@ -8,16 +32,30 @@ const createProductSchema = z.object({
   sku: z.string().optional().nullable(),
   shortDescription: z.string().optional().nullable(),
   description: z.string().default(''),
+
   priceInPaise: z.number().int().nonnegative(),
-  originalPriceInPaise: z.number().int().nonnegative().optional().nullable(),
+  originalPriceInPaise: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .nullable(),
+
   currency: z.string().default('INR'),
-  status: z.enum(['DRAFT', 'ACTIVE', 'SOLD_OUT', 'ARCHIVED']).default('DRAFT'),
+
+  status: z
+    .enum(['DRAFT', 'ACTIVE', 'SOLD_OUT', 'ARCHIVED'])
+    .default('DRAFT'),
+
   isFeatured: z.boolean().default(false),
   isNew: z.boolean().default(false),
   displayOrder: z.number().int().default(0),
   badgeText: z.string().optional().nullable(),
-  primaryImageUrl: z.string().optional().nullable(),
+
+  primaryImageUrl: imageUrlSchema.optional().nullable(),
+
   categoryIds: z.array(z.string()).default([]),
+
   specifications: z
     .array(
       z.object({
@@ -27,16 +65,18 @@ const createProductSchema = z.object({
       })
     )
     .default([]),
+
   images: z
     .array(
       z.object({
-        url: z.string().url(),
+        url: imageUrlSchema,
         altText: z.string().optional().nullable(),
         displayOrder: z.number().int().default(0),
         isPrimary: z.boolean().default(false),
       })
     )
     .default([]),
+
   marketplaceLinks: z
     .array(
       z.object({
@@ -52,21 +92,40 @@ const createProductSchema = z.object({
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
+
     const status = searchParams.get('status');
     const search = searchParams.get('search');
     const categoryId = searchParams.get('categoryId');
 
     const where: any = {};
+
     if (status) {
       where.status = status;
     }
+
     if (search) {
       where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-        { sku: { contains: search, mode: 'insensitive' } },
+        {
+          name: {
+            contains: search,
+            mode: 'insensitive',
+          },
+        },
+        {
+          description: {
+            contains: search,
+            mode: 'insensitive',
+          },
+        },
+        {
+          sku: {
+            contains: search,
+            mode: 'insensitive',
+          },
+        },
       ];
     }
+
     if (categoryId) {
       where.categories = {
         some: { categoryId },
@@ -76,26 +135,36 @@ export async function GET(request: NextRequest) {
     const products = await prisma.product.findMany({
       where,
       include: {
-        images: { orderBy: { displayOrder: 'asc' } },
-        specifications: { orderBy: { displayOrder: 'asc' } },
+        images: {
+          orderBy: { displayOrder: 'asc' },
+        },
+        specifications: {
+          orderBy: { displayOrder: 'asc' },
+        },
         categories: {
-          include: {
-            category: true,
-          },
+          include: { category: true },
         },
         marketplaceLinks: {
-          include: {
-            marketplace: true,
-          },
+          include: { marketplace: true },
         },
       },
-      orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }],
+      orderBy: [
+        { displayOrder: 'asc' },
+        { createdAt: 'desc' },
+      ],
     });
 
-    return NextResponse.json({ success: true, products });
+    return NextResponse.json({
+      success: true,
+      products,
+    });
   } catch (error) {
     console.error('Fetch products error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
   }
 }
 
@@ -106,18 +175,32 @@ export async function POST(request: NextRequest) {
 
     if (!result.success) {
       return NextResponse.json(
-        { error: 'Invalid input', details: result.error.flatten() },
+        {
+          error: 'Invalid input',
+          details: result.error.flatten(),
+        },
         { status: 400 }
       );
     }
 
-    const { categoryIds, specifications, images, marketplaceLinks, ...productData } = result.data;
+    const {
+      categoryIds,
+      specifications,
+      images,
+      marketplaceLinks,
+      ...productData
+    } = result.data;
 
     const product = await prisma.$transaction(async (tx) => {
-      const newProduct = await tx.product.create({
+      return tx.product.create({
         data: {
           ...productData,
-          publishedAt: productData.status === 'ACTIVE' ? new Date() : null,
+
+          publishedAt:
+            productData.status === 'ACTIVE'
+              ? new Date()
+              : null,
+
           images: {
             create: images.map((img) => ({
               url: img.url,
@@ -126,6 +209,7 @@ export async function POST(request: NextRequest) {
               isPrimary: img.isPrimary,
             })),
           },
+
           specifications: {
             create: specifications.map((spec) => ({
               label: spec.label,
@@ -133,11 +217,13 @@ export async function POST(request: NextRequest) {
               displayOrder: spec.displayOrder,
             })),
           },
+
           categories: {
-            create: categoryIds.map((cId) => ({
-              categoryId: cId,
+            create: categoryIds.map((categoryId) => ({
+              categoryId,
             })),
           },
+
           marketplaceLinks: {
             create: marketplaceLinks.map((link) => ({
               marketplaceId: link.marketplaceId,
@@ -147,23 +233,47 @@ export async function POST(request: NextRequest) {
             })),
           },
         },
+
         include: {
           images: true,
           specifications: true,
-          categories: { include: { category: true } },
-          marketplaceLinks: { include: { marketplace: true } },
+          categories: {
+            include: { category: true },
+          },
+          marketplaceLinks: {
+            include: { marketplace: true },
+          },
         },
       });
-
-      return newProduct;
     });
 
-    return NextResponse.json({ success: true, product }, { status: 201 });
-  } catch (error: any) {
+    return NextResponse.json(
+      {
+        success: true,
+        product,
+      },
+      { status: 201 }
+    );
+  } catch (error: unknown) {
     console.error('Create product error:', error);
-    if (error.code === 'P2002') {
-      return NextResponse.json({ error: 'Product with this slug already exists' }, { status: 409 });
+
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'P2002'
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'Product with this slug already exists',
+        },
+        { status: 409 }
+      );
     }
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
   }
 }

@@ -2,16 +2,23 @@
 'use client';
 
 import React, { useState } from 'react';
-import { X, ExternalLink, ShoppingBag } from 'lucide-react';
+import {
+  X,
+  ExternalLink,
+  ShoppingBag,
+} from 'lucide-react';
+
 import { Product } from '@/types';
-import { fmt, calcDiscountPercent } from '@/utils/format';
+import {
+  fmt,
+  calcDiscountPercent,
+} from '@/utils/format';
 
 interface WhereToBuyModalProps {
   product: Product | null;
   onClose: () => void;
 }
 
-// Get marketplace icon automatically from its website URL.
 function getMarketplaceIcon(url: string): string | null {
   try {
     const parsed = new URL(url);
@@ -51,12 +58,12 @@ function MarketplaceIcon({
 
   return (
     <img
-      key={iconUrl}
       src={iconUrl}
       alt={`${name} icon`}
       width={28}
       height={28}
-      className="w-7 h-7 object-contain"
+      loading="lazy"
+      className="h-7 w-7 object-contain"
       onError={() => setFailed(true)}
     />
   );
@@ -74,8 +81,6 @@ export const WhereToBuyModal: React.FC<
 
   const isSoldOut = product.status === 'SOLD_OUT';
 
-  // Only show marketplaces provided by the website's
-  // admin-managed database data.
   const availableLinks = (
     product.marketplaceLinks ?? []
   ).filter((link) => {
@@ -87,58 +92,191 @@ export const WhereToBuyModal: React.FC<
   });
 
   return (
-    <div className="modal">
-      {/* Backdrop */}
+    <div
+      className="
+        modal
+        fixed
+        inset-0
+        z-[80]
+        grid
+        place-items-center
+        overflow-y-auto
+        p-2
+        sm:p-5
+      "
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Where to buy ${product.name}`}
+    >
+      {/* BACKDROP */}
+
       <div
-        className="overlay"
+        className="overlay fixed inset-0"
         onClick={onClose}
+        aria-hidden="true"
       />
 
-      {/* Modal Panel */}
-      <div className="modal-panel z-[81] max-w-xl p-6 md:p-8 rounded-none">
-        {/* Close */}
+      {/* MODAL PANEL */}
+
+      <div
+        className="
+          modal-panel
+          relative
+          z-[81]
+          mx-auto
+          w-full
+          max-w-xl
+          min-w-0
+          max-h-[95dvh]
+          overflow-y-auto
+          bg-white
+          p-4
+          sm:p-6
+          md:p-8
+        "
+      >
+        {/* CLOSE */}
+
         <button
           type="button"
-          className="absolute right-4 top-4 z-10 bg-white p-2 hover:bg-gray-100 transition"
-          aria-label="Close dialog"
           onClick={onClose}
+          aria-label="Close where to buy"
+          className="
+            absolute
+            right-3
+            top-3
+            z-10
+            flex
+            h-10
+            w-10
+            items-center
+            justify-center
+            bg-white
+            transition-colors
+            hover:bg-gray-100
+          "
         >
           <X size={20} />
         </button>
 
-        {/* Header */}
-        <p className="tag">WHERE TO BUY</p>
+        {/* HEADER */}
 
-        <h2 className="serif text-3xl md:text-4xl mt-2 mb-2">
+        <p className="tag pr-12">
+          WHERE TO BUY
+        </p>
+
+        <h2
+          className="
+            serif
+            mb-2
+            mt-3
+            pr-10
+            text-2xl
+            leading-tight
+            sm:text-3xl
+            md:text-4xl
+          "
+        >
           Select Your Store
         </h2>
 
-        <p className="text-xs text-gray-500 mb-6">
+        <p
+          className="
+            mb-6
+            text-xs
+            leading-6
+            text-gray-500
+          "
+        >
           Choose your preferred marketplace.
           You will be redirected to its website.
         </p>
 
-        {/* Selected Product */}
-        <div className="flex items-center gap-4 p-4 bg-[#f6f4ef] border border-[#e5e1d9] mb-6">
+        {/* PRODUCT SUMMARY */}
+
+        <div
+          className="
+            mb-6
+            flex
+            min-w-0
+            items-center
+            gap-3
+            border
+            border-[#e5e1d9]
+            bg-[#f6f4ef]
+            p-3
+            sm:gap-4
+            sm:p-4
+          "
+        >
+          {/* FULL IMAGE - NO CROP */}
+
           {product.image && (
-            <img
-              src={product.image}
-              alt={product.name}
-              className="w-16 h-16 object-cover bg-white shrink-0"
-            />
+            <div
+              className="
+                flex
+                h-20
+                w-20
+                shrink-0
+                items-center
+                justify-center
+                overflow-hidden
+                bg-white
+                p-2
+                sm:h-24
+                sm:w-24
+              "
+            >
+              <img
+                src={product.image}
+                alt={product.name}
+                loading="lazy"
+                className="
+                  block
+                  h-full
+                  w-full
+                  object-contain
+                  object-center
+                "
+                style={{
+                  objectFit: 'contain',
+                  objectPosition: 'center',
+                }}
+              />
+            </div>
           )}
+
+          {/* PRODUCT DETAILS */}
 
           <div className="min-w-0 flex-1">
             <span className="tag block">
               {product.category}
             </span>
 
-            <h3 className="font-semibold text-sm truncate">
+            <h3
+              className="
+                mt-1
+                break-words
+                text-sm
+                font-semibold
+                leading-5
+                sm:text-base
+              "
+            >
               {product.name}
             </h3>
 
-            <div className="flex items-center gap-2 mt-1">
-              <b className="text-sm">
+            <div
+              className="
+                mt-2
+                flex
+                flex-wrap
+                items-center
+                gap-x-2
+                gap-y-1
+              "
+            >
+              <b className="text-sm sm:text-base">
                 {fmt(product.price)}
               </b>
 
@@ -150,33 +288,50 @@ export const WhereToBuyModal: React.FC<
                 )}
 
               {discount > 0 && (
-                <span className="text-[10px] text-green-700 font-semibold">
+                <span
+                  className="
+                    text-[10px]
+                    font-semibold
+                    text-green-700
+                  "
+                >
                   {discount}% OFF
                 </span>
               )}
             </div>
 
             {isSoldOut && (
-              <span className="text-[10px] text-red-600 font-bold uppercase tracking-wider">
+              <span
+                className="
+                  mt-2
+                  block
+                  text-[10px]
+                  font-bold
+                  uppercase
+                  tracking-wider
+                  text-red-600
+                "
+              >
                 Currently Sold Out
               </span>
             )}
           </div>
         </div>
 
-        {/* Marketplace List */}
+        {/* MARKETPLACE LIST */}
+
         {isSoldOut ? (
-          <div className="text-center py-8 text-gray-500">
+          <div className="py-8 text-center text-gray-500">
             <p className="text-sm font-semibold">
               This product is currently sold out.
             </p>
 
-            <p className="text-xs mt-2">
+            <p className="mt-2 text-xs">
               Please check back later.
             </p>
           </div>
         ) : availableLinks.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
+          <div className="py-8 text-center text-gray-500">
             <ShoppingBag
               size={32}
               className="mx-auto mb-3 opacity-30"
@@ -186,7 +341,7 @@ export const WhereToBuyModal: React.FC<
               No marketplaces available right now.
             </p>
 
-            <p className="text-xs mt-2">
+            <p className="mt-2 text-xs">
               Please check back soon.
             </p>
           </div>
@@ -198,11 +353,47 @@ export const WhereToBuyModal: React.FC<
                 href={link.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center justify-between p-4 border border-[#e3e0d8] hover:border-[#141414] bg-white hover:bg-[#faf8f5] transition group"
+                className="
+                  group
+                  flex
+                  min-w-0
+                  items-center
+                  justify-between
+                  gap-3
+                  border
+                  border-[#e3e0d8]
+                  bg-white
+                  p-3
+                  transition-colors
+                  hover:border-[#141414]
+                  hover:bg-[#faf8f5]
+                  sm:p-4
+                "
               >
-                <div className="flex items-center gap-3 min-w-0">
-                  {/* Automatic Marketplace Icon */}
-                  <div className="w-11 h-11 bg-white border border-gray-200 flex items-center justify-center shrink-0">
+                {/* MARKETPLACE DETAILS */}
+
+                <div
+                  className="
+                    flex
+                    min-w-0
+                    flex-1
+                    items-center
+                    gap-3
+                  "
+                >
+                  <div
+                    className="
+                      flex
+                      h-11
+                      w-11
+                      shrink-0
+                      items-center
+                      justify-center
+                      border
+                      border-gray-200
+                      bg-white
+                    "
+                  >
                     <MarketplaceIcon
                       key={link.url}
                       name={link.marketplaceName}
@@ -210,36 +401,96 @@ export const WhereToBuyModal: React.FC<
                     />
                   </div>
 
-                  {/* Name, Tag & Tagline */}
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-bold text-sm">
+                  <div className="min-w-0 flex-1">
+                    <div
+                      className="
+                        flex
+                        flex-wrap
+                        items-center
+                        gap-2
+                      "
+                    >
+                      <span
+                        className="
+                          min-w-0
+                          break-words
+                          text-sm
+                          font-bold
+                        "
+                      >
                         {link.marketplaceName}
                       </span>
 
                       {link.badgeText && (
-                        <span className="text-[9px] uppercase px-2 py-0.5 font-bold bg-gray-100 text-gray-700">
+                        <span
+                          className="
+                            bg-gray-100
+                            px-2
+                            py-1
+                            text-[9px]
+                            font-bold
+                            uppercase
+                            text-gray-700
+                          "
+                        >
                           {link.badgeText}
                         </span>
                       )}
                     </div>
 
                     {link.tagline && (
-                      <p className="text-xs text-gray-500 mt-1">
+                      <p
+                        className="
+                          mt-1
+                          break-words
+                          text-xs
+                          leading-5
+                          text-gray-500
+                        "
+                      >
                         {link.tagline}
                       </p>
                     )}
                   </div>
                 </div>
 
-                {/* Open Marketplace */}
-                <div className="flex items-center gap-2 shrink-0 ml-3">
-                  <span className="hidden sm:inline text-xs font-semibold text-[#141414]">
+                {/* VISIT STORE */}
+
+                <div
+                  className="
+                    ml-1
+                    flex
+                    shrink-0
+                    items-center
+                    gap-2
+                  "
+                >
+                  <span
+                    className="
+                      hidden
+                      text-xs
+                      font-semibold
+                      sm:inline
+                    "
+                  >
                     Visit Store
                   </span>
 
-                  <div className="w-8 h-8 rounded-full bg-[#f6f4ef] group-hover:bg-[#141414] group-hover:text-white flex items-center justify-center transition">
-                    <ExternalLink size={14} />
+                  <div
+                    className="
+                      flex
+                      h-9
+                      w-9
+                      items-center
+                      justify-center
+                      rounded-full
+                      bg-[#f6f4ef]
+                      transition-colors
+                      group-hover:bg-[#141414]
+                      group-hover:text-white
+                    "
+                  >
+                    <ExternalLink size={15} />
                   </div>
                 </div>
               </a>
@@ -247,12 +498,24 @@ export const WhereToBuyModal: React.FC<
           </div>
         )}
 
-        {/* Disclaimer */}
-        <p className="text-[11px] text-gray-400 text-center mt-6">
-          You will be redirected to an external marketplace.
-          Prices and availability may vary by retailer.
+        {/* DISCLAIMER */}
+
+        <p
+          className="
+            mt-6
+            text-center
+            text-[11px]
+            leading-5
+            text-gray-400
+          "
+        >
+          You will be redirected to an external
+          marketplace. Prices and availability
+          may vary by retailer.
         </p>
       </div>
     </div>
   );
 };
+
+export default WhereToBuyModal;

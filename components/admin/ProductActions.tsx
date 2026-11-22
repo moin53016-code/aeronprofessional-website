@@ -1,71 +1,99 @@
+
 'use client';
+
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { MoreHorizontal, Archive, CheckCircle, XCircle } from 'lucide-react';
+import { Trash2, Loader2 } from 'lucide-react';
 
 interface ProductActionsProps {
   productId: string;
   currentStatus: string;
 }
 
-export default function ProductActions({ productId, currentStatus }: ProductActionsProps) {
-  const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
+export default function ProductActions({
+  productId,
+}: ProductActionsProps) {
   const router = useRouter();
 
-  const doAction = async (action: string) => {
+  const [loading, setLoading] = useState(false);
+
+  const handleRemove = async () => {
+    if (loading) return;
+
+    const confirmed = window.confirm(
+      'Remove this product from the website?\n\n' +
+      'The product will be archived and hidden from customers. ' +
+      'Its data will not be permanently deleted.'
+    );
+
+    if (!confirmed) return;
+
     setLoading(true);
-    setOpen(false);
+
     try {
-      const res = await fetch(`/api/admin/products/${productId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-      });
-      if (!res.ok) throw new Error('Action failed');
+      const response = await fetch(
+        `/api/admin/products/${productId}`,
+        {
+          method: 'DELETE',
+        }
+      );
+
+      const data = await response
+        .json()
+        .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || 'Failed to remove product.'
+        );
+      }
+
       router.refresh();
-    } catch {
-      alert('Action failed. Please try again.');
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Failed to remove product.';
+
+      window.alert(message);
     } finally {
       setLoading(false);
     }
   };
 
-  const confirmDelete = async () => {
-    if (!confirm('Archive this product? It will be hidden from the public site.')) return;
-    doAction('archive');
-  };
-
   return (
-    <div className="relative">
-      <button onClick={() => setOpen(!open)} disabled={loading} className="text-gray-500 hover:text-black transition p-1 cursor-pointer">
-        <MoreHorizontal size={15} />
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-6 bg-white border border-gray-200 shadow-lg z-20 w-40 py-1">
-            {currentStatus !== 'ACTIVE' && (
-              <button onClick={() => doAction('publish')} className="flex items-center gap-2 w-full px-3 py-2 text-xs hover:bg-gray-50 text-green-700 text-left cursor-pointer">
-                <CheckCircle size={14} /> Publish
-              </button>
-            )}
-            {currentStatus === 'ACTIVE' && (
-              <button onClick={() => doAction('unpublish')} className="flex items-center gap-2 w-full px-3 py-2 text-xs hover:bg-gray-50 text-orange-600 text-left cursor-pointer">
-                <XCircle size={14} /> Unpublish
-              </button>
-            )}
-            {currentStatus !== 'SOLD_OUT' && (
-              <button onClick={() => doAction('sold_out')} className="flex items-center gap-2 w-full px-3 py-2 text-xs hover:bg-gray-50 text-orange-700 text-left cursor-pointer">
-                <XCircle size={14} /> Mark Sold Out
-              </button>
-            )}
-            <button onClick={confirmDelete} className="flex items-center gap-2 w-full px-3 py-2 text-xs hover:bg-gray-50 text-red-600 text-left cursor-pointer">
-              <Archive size={14} /> Archive
-            </button>
-          </div>
-        </>
+    <button
+      type="button"
+      onClick={handleRemove}
+      disabled={loading}
+      aria-label="Remove product"
+      title="Remove product"
+      className="
+        inline-flex
+        items-center
+        justify-center
+        rounded-md
+        p-2
+        text-red-600
+        transition-colors
+        hover:bg-red-50
+        hover:text-red-700
+        focus-visible:outline
+        focus-visible:outline-2
+        focus-visible:outline-offset-2
+        focus-visible:outline-red-500
+        disabled:cursor-not-allowed
+        disabled:opacity-50
+      "
+    >
+      {loading ? (
+        <Loader2
+          size={17}
+          className="animate-spin"
+        />
+      ) : (
+        <Trash2 size={17} />
       )}
-    </div>
+    </button>
   );
 }

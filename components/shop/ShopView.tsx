@@ -1,6 +1,14 @@
+
 import React from 'react';
-import { Product, Category, SortOption } from '@/types';
+
+import {
+  Product,
+  Category,
+  SortOption,
+} from '@/types';
+
 import { FilterSidebar } from './FilterSidebar';
+
 import { ProductCard } from '@/components/common/ProductCard';
 
 interface ShopViewProps {
@@ -21,8 +29,15 @@ interface ShopViewProps {
 }
 
 /**
- * Main catalog / shop collection view with sidebar filtering, sorting, and direct WHERE TO BUY actions
+ * Fully responsive Shop / Product Catalog.
+ *
+ * - Flexible sidebar
+ * - Responsive search and sorting
+ * - 2-column mobile product grid
+ * - 3-column desktop product grid
+ * - Existing filters preserved
  */
+
 export const ShopView: React.FC<ShopViewProps> = ({
   view,
   categories,
@@ -39,71 +54,301 @@ export const ShopView: React.FC<ShopViewProps> = ({
   onSelectProduct,
   onWhereToBuy,
 }) => {
-  const collectionTitle = view === 'Shop All' ? 'The Complete Collection' : view;
+  const collectionTitle =
+    view === 'Shop All'
+      ? 'The Complete Collection'
+      : view;
 
   return (
-    <main className="max-w-7xl mx-auto px-5 lg:px-8 py-14 min-h-[70vh]">
-      <p className="tag">AERON PROFESSIONAL / COLLECTION</p>
-      <h1 className="serif text-4xl md:text-6xl mt-3 mb-4">{collectionTitle}</h1>
-      <p className="text-sm text-gray-500 mb-10">
-        Explore our curated selection of professional-inspired styling essentials.
-      </p>
+    <main
+      className="
+        mx-auto
+        min-h-[70vh]
+        w-full
+        max-w-7xl
+        min-w-0
+        px-4
+        py-10
+        sm:px-6
+        sm:py-12
+        lg:px-8
+        lg:py-14
+      "
+    >
+      {/* PAGE HEADER */}
 
-      <div className="flex flex-col md:flex-row gap-7">
-        {/* Sidebar */}
-        <FilterSidebar
-          categories={categories}
-          currentCategory={view}
-          maxPrice={maxPrice}
-          maxCatalogPrice={maxCatalogPrice}
-          onSelectCategory={onSelectCategory}
-          onPriceChange={onPriceChange}
-          onClearFilters={onClearFilters}
-        />
+      <div className="mb-8 sm:mb-10">
+        <p className="tag">
+          AERON PROFESSIONAL / COLLECTION
+        </p>
 
-        {/* Product Grid & Controls */}
-        <div className="flex-1">
-          <div className="flex flex-wrap justify-between gap-3 items-center mb-5">
-            <span className="text-xs text-gray-500">{products.length} products</span>
-            <div className="flex gap-2">
+        <h1
+          className="
+            serif
+            mb-4
+            mt-3
+            break-words
+            text-[clamp(1.9rem,5vw,3.75rem)]
+            leading-tight
+          "
+        >
+          {collectionTitle}
+        </h1>
+
+        <p
+          className="
+            max-w-2xl
+            text-sm
+            leading-7
+            text-gray-500
+            sm:text-base
+          "
+        >
+          Explore our curated selection of
+          professional-inspired styling essentials.
+        </p>
+      </div>
+
+      {/* FILTER SIDEBAR + PRODUCT CONTENT */}
+
+      <div
+        className="
+          flex
+          min-w-0
+          flex-col
+          gap-7
+          lg:flex-row
+          lg:items-start
+          lg:gap-8
+        "
+      >
+        {/* FILTERS */}
+
+        <div
+          className="
+            w-full
+            min-w-0
+            lg:w-[240px]
+            lg:shrink-0
+          "
+        >
+          <FilterSidebar
+            categories={categories}
+            currentCategory={view}
+            maxPrice={maxPrice}
+            maxCatalogPrice={maxCatalogPrice}
+            onSelectCategory={onSelectCategory}
+            onPriceChange={onPriceChange}
+            onClearFilters={onClearFilters}
+          />
+        </div>
+
+        {/* PRODUCTS */}
+
+        <div className="min-w-0 flex-1">
+
+          {/* SEARCH + SORT */}
+
+          <div
+            className="
+              mb-6
+              flex
+              flex-col
+              gap-4
+              sm:flex-row
+              sm:flex-wrap
+              sm:items-center
+              sm:justify-between
+            "
+          >
+            <p
+              className="
+                shrink-0
+                text-xs
+                font-medium
+                text-gray-500
+              "
+            >
+              {products.length}{' '}
+              {products.length === 1
+                ? 'product'
+                : 'products'}
+            </p>
+
+            <div
+              className="
+                grid
+                w-full
+                min-w-0
+                grid-cols-1
+                gap-3
+                min-[420px]:grid-cols-2
+                sm:w-auto
+              "
+            >
+              {/* SEARCH INPUT */}
+
               <input
-                className="field max-w-[180px] text-xs"
-                placeholder="Search products"
+                type="search"
+                aria-label="Search products"
+                className="
+                  field
+                  min-h-11
+                  min-w-0
+                  w-full
+                  rounded-sm
+                  text-sm
+                  sm:w-[180px]
+                "
+                placeholder="Search products..."
                 value={search}
-                onChange={(e) => onSearchChange(e.target.value)}
+                onChange={(event) =>
+                  onSearchChange(event.target.value)
+                }
               />
+
+              {/* SORT SELECT */}
+
               <select
                 aria-label="Sort products"
-                className="field text-xs"
+                className="
+                  field
+                  min-h-11
+                  min-w-0
+                  w-full
+                  rounded-sm
+                  text-sm
+                  sm:w-[180px]
+                "
                 value={sort}
-                onChange={(e) => onSortChange(e.target.value as SortOption)}
+                onChange={(event) =>
+                  onSortChange(
+                    event.target.value as SortOption
+                  )
+                }
               >
-                <option value="featured">Featured</option>
-                <option value="low">Price: Low to High</option>
-                <option value="high">Price: High to Low</option>
-                <option value="newest">Newest Arrivals</option>
+                <option value="featured">
+                  Featured
+                </option>
+
+                <option value="low">
+                  Price: Low to High
+                </option>
+
+                <option value="high">
+                  Price: High to Low
+                </option>
+
+                <option value="newest">
+                  Newest Arrivals
+                </option>
               </select>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 md:gap-6">
-            {products.map((product) => (
-              <ProductCard
-                key={product.id}
-                product={product}
-                onSelect={onSelectProduct}
-                onWhereToBuy={onWhereToBuy}
-              />
-            ))}
-          </div>
+          {/* RESPONSIVE PRODUCT GRID */}
 
-          {products.length === 0 && (
-            <p className="py-20 text-center text-gray-500">
-              No products match your filters.
-            </p>
+          {products.length > 0 ? (
+            <div
+              className="
+                grid
+                w-full
+                min-w-0
+                grid-cols-2
+                items-stretch
+                gap-x-3
+                gap-y-5
+                sm:gap-x-5
+                sm:gap-y-7
+                md:grid-cols-3
+                lg:grid-cols-2
+                xl:grid-cols-3
+                xl:gap-6
+              "
+            >
+              {products.map((product) => (
+                <div
+                  key={product.id}
+                  className="h-full min-w-0"
+                >
+                  <ProductCard
+                    product={product}
+                    onSelect={onSelectProduct}
+                    onWhereToBuy={onWhereToBuy}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : (
+            /* EMPTY PRODUCTS STATE */
+
+            <div
+              className="
+                flex
+                min-h-[260px]
+                flex-col
+                items-center
+                justify-center
+                rounded-md
+                border
+                border-gray-200
+                bg-white
+                px-5
+                py-12
+                text-center
+              "
+            >
+              <h3
+                className="
+                  text-base
+                  font-semibold
+                  text-gray-900
+                "
+              >
+                No Products Found
+              </h3>
+
+              <p
+                className="
+                  mt-2
+                  max-w-sm
+                  text-sm
+                  leading-6
+                  text-gray-500
+                "
+              >
+                No products match your current
+                search or filters.
+              </p>
+
+              <button
+                type="button"
+                onClick={onClearFilters}
+                className="
+                  mt-5
+                  inline-flex
+                  min-h-11
+                  items-center
+                  justify-center
+                  bg-black
+                  px-5
+                  py-3
+                  text-xs
+                  font-bold
+                  tracking-wider
+                  text-white
+                  transition-colors
+                  hover:bg-[#987345]
+                "
+              >
+                CLEAR FILTERS
+              </button>
+            </div>
           )}
         </div>
       </div>
     </main>
   );
 };
+
+export default ShopView;

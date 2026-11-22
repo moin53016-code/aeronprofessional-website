@@ -1,5 +1,11 @@
+
 import React from 'react';
-import { Instagram, MessageCircle, Mail } from 'lucide-react';
+import {
+  Instagram,
+  MessageCircle,
+  Mail,
+} from 'lucide-react';
+
 import { SupportTab } from '@/components/modals/SupportModal';
 import { SiteSettings } from '@/types';
 
@@ -17,91 +23,221 @@ const EXPLORE_LINKS = [
   'Professional Collection',
 ];
 
-const CARE_LINKS: { label: string; tab: SupportTab }[] = [
+const CARE_LINKS: {
+  label: string;
+  tab: SupportTab;
+}[] = [
   { label: 'Contact Us', tab: 'contact' },
   { label: 'FAQs', tab: 'faqs' },
-  { label: '1-Year Warranty Guide', tab: 'warranty' },
-  { label: 'Salon & Bulk Inquiries', tab: 'bulk' },
+  {
+    label: '1-Year Warranty Guide',
+    tab: 'warranty',
+  },
+  {
+    label: 'Salon & Bulk Inquiries',
+    tab: 'bulk',
+  },
 ];
 
-const headingClass = 'text-xs leading-none tracking-widest font-bold mb-5 h-4';
-const itemClass = 'flex items-center gap-2 w-full text-left text-sm leading-5 text-gray-400 hover:text-white transition';
-const contactRowClass = 'flex items-center gap-3 text-sm text-gray-300 hover:text-gold transition group';
-const iconWrapClass = 'w-8 h-8 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-gold group-hover:border-gold group-hover:bg-gold group-hover:text-black transition duration-300 shrink-0';
+const headingClass =
+  'mb-5 text-xs font-bold tracking-widest text-white';
 
-export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenSupport, settings }) => {
-  const whatsappUrl = `https://wa.me/${settings.whatsappNumber}?text=${encodeURIComponent(settings.whatsappMessage)}`;
+const linkClass =
+  'flex min-h-9 w-full items-center text-left text-sm leading-6 text-gray-400 transition-colors hover:text-white';
+
+const contactClass =
+  'group flex min-w-0 items-center gap-3 text-sm leading-6 text-gray-300 transition-colors hover:text-[#c6a77a]';
+
+const iconClass =
+  'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-[#c6a77a] transition-colors group-hover:border-[#c6a77a]';
+
+export const Footer: React.FC<FooterProps> = ({
+  onNavigate,
+  onOpenSupport,
+  settings,
+}) => {
   const year = new Date().getFullYear();
 
+  const whatsappUrl = settings.whatsappNumber
+    ? `https://wa.me/${settings.whatsappNumber}?text=${encodeURIComponent(
+        settings.whatsappMessage ?? ''
+      )}`
+    : '';
+
   return (
-    <footer className="bg-[#151515] text-white">
-      <div className="max-w-7xl mx-auto px-5 lg:px-8 py-12 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-10 gap-y-10 items-start">
-        {/* Brand & Contacts */}
-        <div>
+    <footer className="w-full min-w-0 bg-[#151515] text-white">
+      <div
+        className="
+          mx-auto
+          grid
+          w-full
+          max-w-7xl
+          min-w-0
+          grid-cols-1
+          items-start
+          gap-x-8
+          gap-y-10
+          px-4
+          py-12
+          sm:grid-cols-2
+          sm:px-6
+          sm:py-14
+          lg:grid-cols-4
+          lg:gap-x-10
+          lg:px-8
+          lg:py-16
+        "
+      >
+        {/* BRAND AND CONTACTS */}
+
+        <div className="min-w-0">
           <h3 className={headingClass}>
-            AERON <span className="text-gold font-normal">PROFESSIONAL</span>
+            AERON{' '}
+            <span className="font-normal text-[#c6a77a]">
+              PROFESSIONAL
+            </span>
           </h3>
-          <div className="space-y-3 -mt-1">
+
+          <div className="space-y-4">
             {settings.instagramUrl && (
-              <a href={settings.instagramUrl} target="_blank" rel="noopener noreferrer" className={contactRowClass}>
-                <div className={iconWrapClass}><Instagram size={15} /></div>
-                <span className="tracking-wide group-hover:text-gold transition">{settings.instagramHandle}</span>
+              <a
+                href={settings.instagramUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={contactClass}
+                aria-label="Visit AERON Instagram"
+              >
+                <span className={iconClass}>
+                  <Instagram size={17} />
+                </span>
+
+                <span className="min-w-0 break-words">
+                  {settings.instagramHandle}
+                </span>
               </a>
             )}
+
             {settings.whatsappNumber && (
-              <a href={whatsappUrl} target="_blank" rel="noopener noreferrer" className={contactRowClass}>
-                <div className={iconWrapClass}><MessageCircle size={15} /></div>
-                <span className="tracking-wide group-hover:text-gold transition">{settings.businessPhone}</span>
+              <a
+                href={whatsappUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={contactClass}
+                aria-label="Contact AERON on WhatsApp"
+              >
+                <span className={iconClass}>
+                  <MessageCircle size={17} />
+                </span>
+
+                <span className="min-w-0 break-words">
+                  {settings.businessPhone}
+                </span>
               </a>
             )}
+
             {settings.contactEmail && (
-              <a href={`mailto:${settings.contactEmail}`} className={contactRowClass}>
-                <div className={iconWrapClass}><Mail size={15} /></div>
-                <span className="tracking-wide group-hover:text-gold transition break-all">{settings.contactEmail}</span>
+              <a
+                href={`mailto:${settings.contactEmail}`}
+                className={contactClass}
+                aria-label="Email AERON"
+              >
+                <span className={iconClass}>
+                  <Mail size={17} />
+                </span>
+
+                <span className="min-w-0 break-all">
+                  {settings.contactEmail}
+                </span>
               </a>
             )}
           </div>
         </div>
 
-        {/* Explore */}
-        <div>
-          <h3 className={headingClass}>EXPLORE</h3>
-          <ul className="space-y-3">
+        {/* EXPLORE */}
+
+        <div className="min-w-0">
+          <h3 className={headingClass}>
+            EXPLORE
+          </h3>
+
+          <ul className="space-y-2">
             {EXPLORE_LINKS.map((link) => (
               <li key={link}>
-                <button onClick={() => onNavigate(link)} className={itemClass}>{link}</button>
+                <button
+                  type="button"
+                  onClick={() => onNavigate(link)}
+                  className={linkClass}
+                >
+                  {link}
+                </button>
               </li>
             ))}
           </ul>
         </div>
 
-        {/* Customer Care */}
-        <div>
-          <h3 className={headingClass}>CUSTOMER CARE</h3>
-          <ul className="space-y-3">
+        {/* CUSTOMER CARE */}
+
+        <div className="min-w-0">
+          <h3 className={headingClass}>
+            CUSTOMER CARE
+          </h3>
+
+          <ul className="space-y-2">
             {CARE_LINKS.map(({ label, tab }) => (
-              <li key={tab}>
-                <button onClick={() => onOpenSupport(tab)} className={itemClass}>{label}</button>
+              <li key={label}>
+                <button
+                  type="button"
+                  onClick={() => onOpenSupport(tab)}
+                  className={linkClass}
+                >
+                  {label}
+                </button>
               </li>
             ))}
           </ul>
         </div>
 
-        {/* Verified Stores */}
-        <div>
-          <h3 className={headingClass}>VERIFIED STORES</h3>
-          <p className="text-sm leading-5 text-gray-400">
-            Genuine AERON products are officially available on Amazon, Flipkart, Nykaa & authorized salon distributors.
+        {/* VERIFIED STORES */}
+
+        <div className="min-w-0">
+          <h3 className={headingClass}>
+            VERIFIED STORES
+          </h3>
+
+          <p className="break-words text-sm leading-7 text-gray-400">
+            Genuine AERON products are officially
+            available on Amazon, Flipkart, Nykaa
+            &amp; authorized salon distributors.
           </p>
-          <p className="text-sm leading-5 text-gray-500 mt-3">India • Prices shown in INR</p>
+
+          <p className="mt-4 text-sm leading-6 text-gray-500">
+            India • Prices shown in INR
+          </p>
+
           {settings.priceDisclaimer && (
-            <p className="text-xs leading-5 text-gray-600 mt-2">{settings.priceDisclaimer}</p>
+            <p className="mt-3 break-words text-xs leading-6 text-gray-500">
+              {settings.priceDisclaimer}
+            </p>
           )}
         </div>
       </div>
 
-      <div className="border-t border-white/10 text-center text-xs text-gray-500 py-5 px-5">
-        © {year} {settings.copyrightText}
+      {/* COPYRIGHT */}
+
+      <div className="border-t border-white/10 px-4 py-5 sm:px-6">
+        <p
+          className="
+            mx-auto
+            max-w-7xl
+            break-words
+            text-center
+            text-xs
+            leading-6
+            text-gray-500
+          "
+        >
+          © {year} {settings.copyrightText}
+        </p>
       </div>
     </footer>
   );

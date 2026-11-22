@@ -1,32 +1,54 @@
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* ==========================================================================
-   Base & Global Styles
-   ========================================================================== */
+/* =========================================
+   GLOBAL BASE
+========================================= */
+
 :root {
   color-scheme: light;
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
 html {
   scroll-behavior: smooth;
+  width: 100%;
+  min-width: 0;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
   margin: 0;
+  min-width: 0;
+  width: 100%;
   background: #f6f4ef;
   color: #151515;
   font-family: Arial, Helvetica, sans-serif;
 }
 
+img,
+video,
+svg {
+  max-width: 100%;
+}
+
+img,
+video {
+  height: auto;
+}
+
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -39,9 +61,18 @@ button:disabled {
   cursor: not-allowed;
 }
 
-/* ==========================================================================
-   Typography & Accents
-   ========================================================================== */
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* =========================================
+   TYPOGRAPHY
+========================================= */
+
 .serif {
   font-family: Georgia, 'Times New Roman', serif;
 }
@@ -69,14 +100,18 @@ button:disabled {
   color: #ae8857;
 }
 
-/* ==========================================================================
-   Interactive Buttons & Badges
-   ========================================================================== */
+/* =========================================
+   BUTTONS
+========================================= */
+
 .pill {
   border: 1px solid #d7d2c9;
   border-radius: 100px;
   padding: 9px 16px;
-  transition: 0.2s;
+  transition:
+    background-color 0.2s,
+    color 0.2s,
+    border-color 0.2s;
 }
 
 .pill:hover,
@@ -92,10 +127,13 @@ button:disabled {
   justify-content: center;
   gap: 8px;
   padding: 14px 23px;
+  max-width: 100%;
+  min-height: 44px;
   font-size: 12px;
   letter-spacing: 0.14em;
   font-weight: 700;
   text-transform: uppercase;
+  text-align: center;
   transition: 0.2s;
 }
 
@@ -117,28 +155,90 @@ button:disabled {
   color: #111;
 }
 
-/* ==========================================================================
-   Cards & Product Imagery
-   ========================================================================== */
+/* =========================================
+   PRODUCT CARDS
+========================================= */
+
+.product-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #fff;
+}
+
+.product-card > .card-image + div {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.product-card > .card-image + div > .mt-4 {
+  margin-top: auto;
+  padding-top: 16px;
+}
+
+/* =========================================
+   RESPONSIVE PRODUCT IMAGES
+========================================= */
+
 .card-image {
-  background: linear-gradient(135deg, #f1eee8, #e7e2d9);
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
+/* Always show the complete product */
+
+.card-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  object-position: center;
+  transform: none;
+}
+
+/* Disable zoom that previously cropped images */
+
+.product-card:hover .card-image img {
+  transform: none;
+}
+
+/* =========================================
+   REUSABLE IMAGE FIT CLASS
+========================================= */
+
+.image-auto-fit {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+
+.image-fit-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
   overflow: hidden;
 }
 
-.card-image img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transition: transform 0.45s;
-}
+/* =========================================
+   OVERLAYS, DRAWERS & MODALS
+========================================= */
 
-.product-card:hover .card-image img {
-  transform: scale(1.055);
-}
-
-/* ==========================================================================
-   Overlays, Drawers & Modals
-   ========================================================================== */
 .overlay {
   position: fixed;
   inset: 0;
@@ -148,14 +248,17 @@ button:disabled {
 
 .drawer {
   position: fixed;
-  right: 0;
   top: 0;
-  height: 100vh;
+  right: 0;
   width: min(460px, 100vw);
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
   background: #fff;
   z-index: 70;
-  overflow: auto;
   box-shadow: -10px 0 50px #0003;
+  overscroll-behavior: contain;
 }
 
 .modal {
@@ -165,22 +268,29 @@ button:disabled {
   display: grid;
   place-items: center;
   padding: 20px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .modal-panel {
-  width: min(900px, 100%);
-  max-height: 94vh;
-  overflow: auto;
-  background: white;
   position: relative;
+  width: min(900px, 100%);
+  min-width: 0;
+  max-height: 94vh;
+  max-height: 94dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: #fff;
+  overscroll-behavior: contain;
 }
 
-/* ==========================================================================
-   Form Fields & Utilities
-   ========================================================================== */
+/* =========================================
+   FORM FIELDS
+========================================= */
+
 .field {
   width: 100%;
+  min-width: 0;
   border: 1px solid #d8d3cb;
   padding: 12px;
   background: white;
@@ -196,14 +306,140 @@ button:disabled {
   background: #e1ddd5;
 }
 
-/* ==========================================================================
-   Media Queries
-   ========================================================================== */
+/* =========================================
+   RESPONSIVE TABLES
+========================================= */
+
+.responsive-table {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* =========================================
+   TABLET
+========================================= */
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .hero-title {
+    font-size: clamp(42px, 6vw, 68px);
+  }
+
+  .modal {
+    padding: 20px;
+  }
+
+  .product-card .card-image {
+    background: #fff;
+  }
+}
+
+/* =========================================
+   MOBILE
+========================================= */
+
 @media (max-width: 767px) {
   .hero-title {
-    font-size: 42px !important;
+    font-size: clamp(30px, 8vw, 42px) !important;
+    line-height: 1.1;
+    overflow-wrap: break-word;
   }
+
   .mobile-hide {
     display: none !important;
+  }
+
+  .modal {
+    padding: 10px;
+  }
+
+  .modal-panel {
+    width: 100%;
+    max-height: calc(100dvh - 20px);
+  }
+
+  .drawer {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .product-card .card-image {
+    background: #fff;
+  }
+
+  .product-card .card-image img {
+    object-fit: contain;
+    object-position: center;
+  }
+
+  .product-card > .card-image + div {
+    padding: 12px;
+  }
+
+  .product-card .btn {
+    padding: 12px 10px;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+  }
+
+  .tag {
+    font-size: 9px;
+  }
+}
+
+/* =========================================
+   SMALL MOBILE
+========================================= */
+
+@media (max-width: 380px) {
+  .hero-title {
+    font-size: 30px !important;
+  }
+
+  .product-card > .card-image + div {
+    padding: 10px;
+  }
+
+  .product-card .tag {
+    font-size: 8px;
+    letter-spacing: 0.1em;
+  }
+
+  .product-card button {
+    overflow-wrap: anywhere;
+  }
+
+  .modal {
+    padding: 6px;
+  }
+
+  .modal-panel {
+    max-height: calc(100dvh - 12px);
+  }
+}
+
+/* =========================================
+   TOUCH DEVICES
+========================================= */
+
+@media (hover: none) {
+  .product-card:hover .card-image img {
+    transform: none;
+  }
+}
+
+/* =========================================
+   REDUCED MOTION
+========================================= */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .card-image img,
+  .product-card:hover .card-image img {
+    transition: none;
+    transform: none;
   }
 }
