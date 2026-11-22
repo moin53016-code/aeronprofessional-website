@@ -1,0 +1,17 @@
+name = "aeron-professional"
+main = ".open-next/worker.js"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = ".open-next/assets"
+binding = "ASSETS"
+
+# Cloudflare R2 bucket for product and banner media storage
+[[r2_buckets]]
+binding = "AERON_MEDIA_BUCKET"
+bucket_name = "aeron-media"
+
+# Production environment variables (Secrets should be set via `wrangler secret put <KEY>`)
+[vars]
+NEXT_PUBLIC_SITE_URL = "https://www.aeronprofessional.com"
