@@ -1,76 +1,105 @@
+
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
 
-const SECRET = new TextEncoder().encode(
-  process.env.AUTH_SECRET || 'dev-secret-change-in-production-32chars'
-);
+const COOKIE_NAME = 'aeron_admin_session';
 
-export async function middleware(request: NextRequest) {
+function getSecret() {
+  const secret = process.env.AUTH_SECRET;
+
+  if (!secret || secret.length < 32) {
+    throw new Error('AUTH_SECRET is not configured securely.');
+  }
+
+  return new TextEncoder().encode(secret);
+}
+
+export async function middleware(
+  request: NextRequest
+) {
   const { pathname } = request.nextUrl;
 
-  // Public admin login page
-  if (pathname === '/admin/login') {
-    return NextResponse.next();
-  }
-
-  // Public authentication endpoints
-  // Login must be accessible without an existing session.
-  if (pathname === '/api/admin/auth/login') {
-    return NextResponse.next();
-  }
-
-  // Protect admin pages
-  if (pathname === '/admin' || pathname.startsWith('/admin/')) {
-    const token = request.cookies.get('aeron_admin_session')?.value;
-
-    if (!token) {
-      return NextResponse.redirect(
-        new URL('/admin/login', request.url)
-      );
-    }
-
-    try {
-      await jwtVerify(token, SECRET);
-      return NextResponse.next();
-    } catch {
-      const response = NextResponse.redirect(
-        new URL('/admin/login', request.url)
-      );
-
-      response.cookies.delete('aeron_admin_session');
-      return response;
-    }
-  }
-
-  // Protect all other admin API endpoints
-  if (
+  const isApi =
     pathname === '/api/admin' ||
-    pathname.startsWith('/api/admin/')
-  ) {
-    const token = request.cookies.get('aeron_admin_session')?.value;
+    pathname.startsWith('/api/admin/');
 
-    if (!token) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
+  const isLogin =
+    pathname === '/admin/login';
 
-    try {
-      await jwtVerify(token, SECRET);
-      return NextResponse.next();
-    } catch {
-      return NextResponse.json(
-        { error: 'Invalid session' },
-        { status: 401 }
-      );
-    }
+  const requestHeaders = new Headers(request.headers);
+
+  // Never trust a client-supplied login-page marker.
+  requestHeaders.delete('x-aeron-login-page');
+
+  if (isLogin) {
+    requestHeaders.set('x-aeron-login-page', 'true');
+
+    return NextResponse.next({
+      request: {
+        headers: requestHeaders,
+      },
+    });
   }
 
-  return NextResponse.next();
+  if (
+    pathname === '/api/admin/auth/login' ||
+    pathname === '/api/admin/auth/logout'
+  ) {
+    return NextResponse.next({
+      request: {
+        headers: requestHeaders,
+      },
+    });
+  }
+
+  const token = request.cookies.get(COOKIE_NAME)?.value;
+
+  try {
+    if (!token) {
+      throw new Error('Missing admin session');
+    }
+
+    const { payload } = await jwtVerify(
+      token,
+      getSecret(),
+      {
+        algorithms: ['HS256'],
+      }
+    );
+
+    if (typeof payload.userId !== 'string') {
+      throw new Error('Invalid session');
+    }
+
+    return NextResponse.next({
+      request: {
+        headers: requestHeaders,
+      },
+    });
+  } catch {
+    const response = isApi
+      ? NextResponse.json(
+          {
+            error: 'Unauthorized. Please log in.',
+          },
+          {
+            status: 401,
+          }
+        )
+      : NextResponse.redirect(
+          new URL('/admin/login', request.url)
+        );
+
+    response.cookies.delete(COOKIE_NAME);
+
+    return response;
+  }
 }
 
 export const config = {
-  matcher: ['/admin/:path*', '/api/admin/:path*'],
+  matcher: [
+    '/admin/:path*',
+    '/api/admin/:path*',
+  ],
 };

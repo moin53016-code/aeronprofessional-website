@@ -2,7 +2,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
-
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 
@@ -10,111 +9,39 @@ type Context = {
   params: Promise<{ id: string }>;
 };
 
-const imageUrlSchema = z.string().refine(
-  (value) => {
-    if (/^\/uploads\/[a-zA-Z0-9._-]+$/.test(value)) {
-      return true;
-    }
-
-    try {
-      const url = new URL(value);
-      return (
-        url.protocol === 'https:' ||
-        url.protocol === 'http:'
-      );
-    } catch {
-      return false;
-    }
-  },
-  {
-    message:
-      'Image must be an HTTP(S) URL or a valid /uploads/ path.',
-  }
-);
-
-const updateProductSchema = z.object({
-  name: z.string().min(1).optional(),
-  slug: z.string().min(1).optional(),
-  sku: z.string().nullable().optional(),
-  shortDescription: z.string().nullable().optional(),
-  description: z.string().optional(),
-
-  priceInPaise: z.number().int().nonnegative().optional(),
-  originalPriceInPaise: z
-    .number()
-    .int()
-    .nonnegative()
-    .nullable()
-    .optional(),
-
-  currency: z.string().optional(),
-
-  status: z
-    .enum(['DRAFT', 'ACTIVE', 'SOLD_OUT', 'ARCHIVED'])
-    .optional(),
-
-  isFeatured: z.boolean().optional(),
-  isNew: z.boolean().optional(),
-  displayOrder: z.number().int().optional(),
-  badgeText: z.string().nullable().optional(),
-
-  primaryImageUrl: imageUrlSchema.nullable().optional(),
-
-  categoryIds: z.array(z.string()).optional(),
-
-  specifications: z
-    .array(
-      z.object({
-        label: z.string().min(1),
-        value: z.string().nullable().optional(),
-        displayOrder: z.number().int().default(0),
-      })
-    )
-    .optional(),
-
-  images: z
-    .array(
-      z.object({
-        url: imageUrlSchema,
-        altText: z.string().nullable().optional(),
-        displayOrder: z.number().int().default(0),
-        isPrimary: z.boolean().default(false),
-      })
-    )
-    .optional(),
-
-  marketplaceLinks: z
-    .array(
-      z.object({
-        marketplaceId: z.string(),
-        url: z.string().url(),
-        isActive: z.boolean().default(true),
-        displayOrder: z.number().int().default(0),
-      })
-    )
-    .optional(),
+const updateSchema = z.object({
+  name: z.string().trim().min(1).optional(),
+  description: z.string().nullable().optional(),
+  discountLabel: z.string().nullable().optional(),
+  isActive: z.boolean().optional(),
+  startsAt: z.string().datetime({ offset: true }).nullable().optional(),
+  endsAt: z.string().datetime({ offset: true }).nullable().optional(),
+  productIds: z.array(z.string().min(1)).optional(),
 });
+
+const includeProducts = {
+  discountProducts: {
+    include: {
+      product: true,
+    },
+  },
+} as const;
 
 function unauthorized() {
   return NextResponse.json(
-    {
-      success: false,
-      error: 'Unauthorized. Please log in.',
-    },
+    { error: 'Unauthorized. Please log in.' },
     { status: 401 }
   );
 }
 
-function refreshProducts() {
+function refreshPages() {
   revalidatePath('/');
-  revalidatePath('/admin/products');
+  revalidatePath('/admin/discounts');
+  revalidatePath('/admin');
 }
 
-function errorResponse(
-  error: unknown,
-  operation: string
-) {
-  console.error(`Product ${operation} error:`, error);
+function handleError(error: unknown) {
+  console.error('Discount campaign API error:', error);
 
   const code =
     typeof error === 'object' &&
@@ -125,365 +52,246 @@ function errorResponse(
 
   if (code === 'P2025') {
     return NextResponse.json(
-      { success: false, error: 'Product not found.' },
+      { error: 'Discount campaign not found.' },
       { status: 404 }
     );
   }
 
-  if (code === 'P2002') {
+  if (code === 'P2003') {
     return NextResponse.json(
-      {
-        success: false,
-        error: 'Product slug or unique value already exists.',
-      },
-      { status: 409 }
+      { error: 'One or more selected products do not exist.' },
+      { status: 400 }
     );
   }
 
   return NextResponse.json(
-    {
-      success: false,
-      error: `Failed to ${operation} product.`,
-    },
+    { error: 'Unable to process discount campaign.' },
     { status: 500 }
   );
 }
 
-// GET SINGLE PRODUCT
+// GET CAMPAIGN
 
 export async function GET(
   _request: NextRequest,
   { params }: Context
 ) {
   try {
-    if (!(await getSession())) {
-      return unauthorized();
-    }
+    if (!(await getSession())) return unauthorized();
 
     const { id } = await params;
 
-    const product = await prisma.product.findUnique({
+    const discount = await prisma.discountCampaign.findUnique({
       where: { id },
-      include: {
-        images: {
-          orderBy: { displayOrder: 'asc' },
-        },
-        specifications: {
-          orderBy: { displayOrder: 'asc' },
-        },
-        categories: {
-          include: { category: true },
-        },
-        marketplaceLinks: {
-          include: { marketplace: true },
-        },
-        discountProducts: {
-          include: { campaign: true },
-        },
-      },
+      include: includeProducts,
     });
 
-    if (!product) {
+    if (!discount) {
       return NextResponse.json(
-        {
-          success: false,
-          error: 'Product not found.',
-        },
+        { error: 'Discount campaign not found.' },
         { status: 404 }
       );
     }
 
     return NextResponse.json({
       success: true,
-      product,
+      discount,
     });
   } catch (error) {
-    return errorResponse(error, 'fetch');
+    return handleError(error);
   }
 }
 
-// UPDATE PRODUCT
+// EDIT CAMPAIGN
 
 export async function PUT(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    if (!(await getSession())) {
-      return unauthorized();
-    }
+    if (!(await getSession())) return unauthorized();
 
     const { id } = await params;
     const body = await request.json().catch(() => null);
+    const parsed = updateSchema.safeParse(body);
 
-    const result = updateProductSchema.safeParse(body);
-
-    if (!result.success) {
+    if (!parsed.success) {
       return NextResponse.json(
         {
-          success: false,
-          error: 'Invalid product data.',
-          details: z.flattenError(result.error),
+          error: 'Invalid discount campaign data.',
+          details: parsed.error.flatten(),
         },
         { status: 400 }
       );
     }
 
     const {
-      categoryIds,
-      specifications,
-      images,
-      marketplaceLinks,
-      ...productData
-    } = result.data;
+      productIds,
+      startsAt,
+      endsAt,
+      ...data
+    } = parsed.data;
 
-    const updated = await prisma.$transaction(
+    const discount = await prisma.$transaction(
       async (tx) => {
-        let publishedAtUpdate: {
-          publishedAt?: Date;
-        } = {};
+        const existing = await tx.discountCampaign.findUnique({
+          where: { id },
+        });
 
-        if (productData.status === 'ACTIVE') {
-          const existing = await tx.product.findUnique({
-            where: { id },
-            select: { publishedAt: true },
-          });
-
-          if (existing && !existing.publishedAt) {
-            publishedAtUpdate = {
-              publishedAt: new Date(),
-            };
-          }
+        if (!existing) {
+          throw new Error('CAMPAIGN_NOT_FOUND');
         }
 
-        await tx.product.update({
+        const start =
+          startsAt === undefined
+            ? existing.startsAt
+            : startsAt
+              ? new Date(startsAt)
+              : null;
+
+        const end =
+          endsAt === undefined
+            ? existing.endsAt
+            : endsAt
+              ? new Date(endsAt)
+              : null;
+
+        if (start && end && end < start) {
+          throw new Error('INVALID_DATE_RANGE');
+        }
+
+        await tx.discountCampaign.update({
           where: { id },
           data: {
-            ...productData,
-            ...publishedAtUpdate,
+            ...data,
+            startsAt: start,
+            endsAt: end,
           },
         });
 
-        // CATEGORY ASSOCIATIONS
-
-        if (categoryIds !== undefined) {
-          await tx.productCategory.deleteMany({
-            where: { productId: id },
+        if (productIds !== undefined) {
+          await tx.discountProduct.deleteMany({
+            where: { campaignId: id },
           });
 
-          if (categoryIds.length > 0) {
-            await tx.productCategory.createMany({
-              data: categoryIds.map((categoryId) => ({
-                productId: id,
-                categoryId,
+          const uniqueIds = [...new Set(productIds)];
+
+          if (uniqueIds.length > 0) {
+            await tx.discountProduct.createMany({
+              data: uniqueIds.map((productId) => ({
+                campaignId: id,
+                productId,
               })),
             });
           }
         }
 
-        // SPECIFICATIONS
-
-        if (specifications !== undefined) {
-          await tx.productSpecification.deleteMany({
-            where: { productId: id },
-          });
-
-          if (specifications.length > 0) {
-            await tx.productSpecification.createMany({
-              data: specifications.map((spec) => ({
-                productId: id,
-                label: spec.label,
-                value: spec.value,
-                displayOrder: spec.displayOrder,
-              })),
-            });
-          }
-        }
-
-        // PRODUCT IMAGES
-
-        if (images !== undefined) {
-          await tx.productImage.deleteMany({
-            where: { productId: id },
-          });
-
-          if (images.length > 0) {
-            await tx.productImage.createMany({
-              data: images.map((image) => ({
-                productId: id,
-                url: image.url,
-                altText: image.altText,
-                displayOrder: image.displayOrder,
-                isPrimary: image.isPrimary,
-              })),
-            });
-          }
-        }
-
-        // MARKETPLACE LINKS
-
-        if (marketplaceLinks !== undefined) {
-          await tx.productMarketplaceLink.deleteMany({
-            where: { productId: id },
-          });
-
-          if (marketplaceLinks.length > 0) {
-            await tx.productMarketplaceLink.createMany({
-              data: marketplaceLinks.map((link) => ({
-                productId: id,
-                marketplaceId: link.marketplaceId,
-                url: link.url,
-                isActive: link.isActive,
-                displayOrder: link.displayOrder,
-              })),
-            });
-          }
-        }
-
-        return tx.product.findUnique({
+        return tx.discountCampaign.findUniqueOrThrow({
           where: { id },
-          include: {
-            images: true,
-            specifications: true,
-            categories: {
-              include: { category: true },
-            },
-            marketplaceLinks: {
-              include: { marketplace: true },
-            },
-          },
+          include: includeProducts,
         });
       }
     );
 
-    refreshProducts();
+    refreshPages();
 
     return NextResponse.json({
       success: true,
-      message: 'Product updated successfully.',
-      product: updated,
+      discount,
     });
   } catch (error) {
-    return errorResponse(error, 'update');
+    if (
+      error instanceof Error &&
+      error.message === 'CAMPAIGN_NOT_FOUND'
+    ) {
+      return NextResponse.json(
+        { error: 'Discount campaign not found.' },
+        { status: 404 }
+      );
+    }
+
+    if (
+      error instanceof Error &&
+      error.message === 'INVALID_DATE_RANGE'
+    ) {
+      return NextResponse.json(
+        { error: 'End date must not be before start date.' },
+        { status: 400 }
+      );
+    }
+
+    return handleError(error);
   }
 }
 
-// PRODUCT STATUS ACTIONS
+// ACTIVATE / DEACTIVATE
 
 export async function PATCH(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    if (!(await getSession())) {
-      return unauthorized();
-    }
+    if (!(await getSession())) return unauthorized();
 
     const { id } = await params;
     const body = await request.json().catch(() => null);
 
-    const parsed = z
-      .object({
-        action: z.enum([
-          'publish',
-          'unpublish',
-          'sold_out',
-          'archive',
-          'restore',
-        ]),
-      })
-      .safeParse(body);
+    const parsed = z.object({
+      isActive: z.boolean(),
+    }).safeParse(body);
 
     if (!parsed.success) {
       return NextResponse.json(
-        {
-          success: false,
-          error: 'Invalid product action.',
-        },
+        { error: 'Invalid campaign status.' },
         { status: 400 }
       );
     }
 
-    const action = parsed.data.action;
-
-    let updateData: {
-      status: 'ACTIVE' | 'DRAFT' | 'SOLD_OUT' | 'ARCHIVED';
-      publishedAt?: Date;
-    };
-
-    switch (action) {
-      case 'publish':
-        updateData = {
-          status: 'ACTIVE',
-          publishedAt: new Date(),
-        };
-        break;
-
-      case 'unpublish':
-        updateData = { status: 'DRAFT' };
-        break;
-
-      case 'sold_out':
-        updateData = { status: 'SOLD_OUT' };
-        break;
-
-      case 'archive':
-        updateData = { status: 'ARCHIVED' };
-        break;
-
-      case 'restore':
-        updateData = { status: 'ACTIVE' };
-        break;
-    }
-
-    const product = await prisma.product.update({
+    const discount = await prisma.discountCampaign.update({
       where: { id },
-      data: updateData,
+      data: {
+        isActive: parsed.data.isActive,
+      },
+      include: includeProducts,
     });
 
-    refreshProducts();
+    refreshPages();
 
     return NextResponse.json({
       success: true,
-      product,
+      discount,
     });
   } catch (error) {
-    return errorResponse(error, 'change status of');
+    return handleError(error);
   }
 }
 
-// PERMANENT PRODUCT DELETE
-// DELETE NEVER ARCHIVES A PRODUCT.
+// DELETE CAMPAIGN ONLY
 
 export async function DELETE(
   _request: NextRequest,
   { params }: Context
 ) {
   try {
-    if (!(await getSession())) {
-      return unauthorized();
-    }
+    if (!(await getSession())) return unauthorized();
 
     const { id } = await params;
 
-    // Prisma onDelete: Cascade removes associated
-    // product images, specifications, category links,
-    // marketplace links and discount associations
-    // from the database.
+    // Prisma cascade removes DiscountProduct associations.
+    // Product records themselves remain untouched.
 
-    await prisma.product.delete({
+    await prisma.discountCampaign.delete({
       where: { id },
     });
 
-    refreshProducts();
+    refreshPages();
 
     return NextResponse.json({
       success: true,
       deleted: true,
-      deletedProductCount: 1,
-      message: 'Product permanently deleted.',
+      message: 'Discount campaign deleted. Products preserved.',
     });
   } catch (error) {
-    return errorResponse(error, 'delete');
+    return handleError(error);
   }
 }

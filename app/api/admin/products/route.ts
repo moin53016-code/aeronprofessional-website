@@ -1,9 +1,18 @@
 
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { z } from 'zod';
 
-// Accept both external image URLs and locally uploaded images.
+import {
+  adminDenied,
+  apiError,
+  badInput,
+  refreshAdmin,
+} from '@/lib/admin-api';
+
+// IMAGE URL VALIDATION
+
 const imageUrlSchema = z.string().refine(
   (value) => {
     if (/^\/uploads\/[a-zA-Z0-9._-]+$/.test(value)) {
@@ -12,6 +21,7 @@ const imageUrlSchema = z.string().refine(
 
     try {
       const url = new URL(value);
+
       return (
         url.protocol === 'https:' ||
         url.protocol === 'http:'
@@ -20,48 +30,78 @@ const imageUrlSchema = z.string().refine(
       return false;
     }
   },
-  {
-    message:
-      'Image must be an HTTP(S) URL or a valid /uploads/ path.',
-  }
+  'Use an HTTP(S) image URL or a valid /uploads/ path.'
 );
 
+// PRODUCT STATUS
+
+const statusSchema = z.enum([
+  'DRAFT',
+  'ACTIVE',
+  'SOLD_OUT',
+  'ARCHIVED',
+]);
+
+// PRODUCT VALIDATION
+
 const createProductSchema = z.object({
-  name: z.string().min(1),
-  slug: z.string().min(1),
-  sku: z.string().optional().nullable(),
-  shortDescription: z.string().optional().nullable(),
+  name: z.string().trim().min(1),
+  slug: z.string().trim().min(1),
+
+  sku: z.string().nullable().optional(),
+
+  shortDescription: z
+    .string()
+    .nullable()
+    .optional(),
+
   description: z.string().default(''),
 
-  priceInPaise: z.number().int().nonnegative(),
+  priceInPaise: z
+    .number()
+    .int()
+    .nonnegative(),
+
   originalPriceInPaise: z
     .number()
     .int()
     .nonnegative()
-    .optional()
-    .nullable(),
+    .nullable()
+    .optional(),
 
   currency: z.string().default('INR'),
 
-  status: z
-    .enum(['DRAFT', 'ACTIVE', 'SOLD_OUT', 'ARCHIVED'])
-    .default('DRAFT'),
+  status: statusSchema.default('DRAFT'),
 
   isFeatured: z.boolean().default(false),
   isNew: z.boolean().default(false),
+
   displayOrder: z.number().int().default(0),
-  badgeText: z.string().optional().nullable(),
 
-  primaryImageUrl: imageUrlSchema.optional().nullable(),
+  badgeText: z.string().nullable().optional(),
 
-  categoryIds: z.array(z.string()).default([]),
+  primaryImageUrl: imageUrlSchema
+    .nullable()
+    .optional(),
+
+  categoryIds: z
+    .array(z.string().min(1))
+    .default([]),
 
   specifications: z
     .array(
       z.object({
-        label: z.string().min(1),
-        value: z.string().optional().nullable(),
-        displayOrder: z.number().int().default(0),
+        label: z.string().trim().min(1),
+
+        value: z
+          .string()
+          .nullable()
+          .optional(),
+
+        displayOrder: z
+          .number()
+          .int()
+          .default(0),
       })
     )
     .default([]),
@@ -70,9 +110,20 @@ const createProductSchema = z.object({
     .array(
       z.object({
         url: imageUrlSchema,
-        altText: z.string().optional().nullable(),
-        displayOrder: z.number().int().default(0),
-        isPrimary: z.boolean().default(false),
+
+        altText: z
+          .string()
+          .nullable()
+          .optional(),
+
+        displayOrder: z
+          .number()
+          .int()
+          .default(0),
+
+        isPrimary: z
+          .boolean()
+          .default(false),
       })
     )
     .default([]),
@@ -80,28 +131,104 @@ const createProductSchema = z.object({
   marketplaceLinks: z
     .array(
       z.object({
-        marketplaceId: z.string(),
-        url: z.string().url(),
-        isActive: z.boolean().default(true),
-        displayOrder: z.number().int().default(0),
+        marketplaceId: z.string().min(1),
+
+        url: z.string().url().refine(
+          (value) => {
+            try {
+              const url = new URL(value);
+
+              return (
+                url.protocol === 'https:' ||
+                url.protocol === 'http:'
+              );
+            } catch {
+              return false;
+            }
+          },
+          'Invalid marketplace URL'
+        ),
+
+        isActive: z
+          .boolean()
+          .default(true),
+
+        displayOrder: z
+          .number()
+          .int()
+          .default(0),
       })
     )
     .default([]),
 });
 
-export async function GET(request: NextRequest) {
+// PRODUCT RELATIONS
+
+const productInclude = {
+  images: {
+    orderBy: {
+      displayOrder: 'asc',
+    },
+  },
+
+  specifications: {
+    orderBy: {
+      displayOrder: 'asc',
+    },
+  },
+
+  categories: {
+    include: {
+      category: true,
+    },
+  },
+
+  marketplaceLinks: {
+    include: {
+      marketplace: true,
+    },
+  },
+} as const;
+
+// GET ALL PRODUCTS
+
+export async function GET(
+  request: NextRequest
+) {
   try {
+    const denied = await adminDenied();
+
+    if (denied) return denied;
+
     const { searchParams } = new URL(request.url);
 
-    const status = searchParams.get('status');
-    const search = searchParams.get('search');
-    const categoryId = searchParams.get('categoryId');
+    const rawStatus =
+      searchParams.get('status');
 
-    const where: any = {};
+    const search =
+      searchParams.get('search')?.trim();
 
-    if (status) {
-      where.status = status;
+    const categoryId =
+      searchParams.get('categoryId');
+
+    const where: Prisma.ProductWhereInput = {};
+
+    // STATUS FILTER
+
+    if (rawStatus) {
+      const parsedStatus =
+        statusSchema.safeParse(rawStatus);
+
+      if (!parsedStatus.success) {
+        return badInput(
+          'Invalid product status.'
+        );
+      }
+
+      where.status = parsedStatus.data;
     }
+
+    // PRODUCT SEARCH
 
     if (search) {
       where.OR = [
@@ -126,31 +253,28 @@ export async function GET(request: NextRequest) {
       ];
     }
 
+    // CATEGORY FILTER
+
     if (categoryId) {
       where.categories = {
-        some: { categoryId },
+        some: {
+          categoryId,
+        },
       };
     }
 
     const products = await prisma.product.findMany({
       where,
-      include: {
-        images: {
-          orderBy: { displayOrder: 'asc' },
-        },
-        specifications: {
-          orderBy: { displayOrder: 'asc' },
-        },
-        categories: {
-          include: { category: true },
-        },
-        marketplaceLinks: {
-          include: { marketplace: true },
-        },
-      },
+
+      include: productInclude,
+
       orderBy: [
-        { displayOrder: 'asc' },
-        { createdAt: 'desc' },
+        {
+          displayOrder: 'asc',
+        },
+        {
+          createdAt: 'desc',
+        },
       ],
     });
 
@@ -159,27 +283,31 @@ export async function GET(request: NextRequest) {
       products,
     });
   } catch (error) {
-    console.error('Fetch products error:', error);
-
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    return apiError(error, 'Product');
   }
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const result = createProductSchema.safeParse(body);
+// CREATE NEW PRODUCT
 
-    if (!result.success) {
-      return NextResponse.json(
-        {
-          error: 'Invalid input',
-          details: result.error.flatten(),
-        },
-        { status: 400 }
+export async function POST(
+  request: NextRequest
+) {
+  try {
+    const denied = await adminDenied();
+
+    if (denied) return denied;
+
+    const body = await request
+      .json()
+      .catch(() => null);
+
+    const parsed =
+      createProductSchema.safeParse(body);
+
+    if (!parsed.success) {
+      return badInput(
+        'Invalid product data.',
+        parsed.error.flatten()
       );
     }
 
@@ -189,91 +317,108 @@ export async function POST(request: NextRequest) {
       images,
       marketplaceLinks,
       ...productData
-    } = result.data;
+    } = parsed.data;
 
-    const product = await prisma.$transaction(async (tx) => {
-      return tx.product.create({
-        data: {
-          ...productData,
+    // PRICE VALIDATION
 
-          publishedAt:
-            productData.status === 'ACTIVE'
-              ? new Date()
-              : null,
+    if (
+      productData.originalPriceInPaise != null &&
+      productData.originalPriceInPaise <
+        productData.priceInPaise
+    ) {
+      return badInput(
+        'Original price cannot be lower than selling price.'
+      );
+    }
 
-          images: {
-            create: images.map((img) => ({
-              url: img.url,
-              altText: img.altText,
-              displayOrder: img.displayOrder,
-              isPrimary: img.isPrimary,
-            })),
-          },
+    // PREVENT DUPLICATE CATEGORY ASSIGNMENTS
 
-          specifications: {
-            create: specifications.map((spec) => ({
-              label: spec.label,
-              value: spec.value,
-              displayOrder: spec.displayOrder,
-            })),
-          },
+    const uniqueCategoryIds = [
+      ...new Set(categoryIds),
+    ];
 
-          categories: {
-            create: categoryIds.map((categoryId) => ({
+    // PREVENT DUPLICATE MARKETPLACE ASSIGNMENTS
+
+    const uniqueMarketplaceLinks = [
+      ...new Map(
+        marketplaceLinks.map((link) => [
+          link.marketplaceId,
+          link,
+        ])
+      ).values(),
+    ];
+
+    // CREATE PRODUCT AND RELATED RECORDS
+
+    const product = await prisma.product.create({
+      data: {
+        ...productData,
+
+        publishedAt:
+          productData.status === 'ACTIVE'
+            ? new Date()
+            : null,
+
+        images: {
+          create: images.map((image) => ({
+            url: image.url,
+            altText: image.altText,
+            displayOrder: image.displayOrder,
+            isPrimary: image.isPrimary,
+          })),
+        },
+
+        specifications: {
+          create: specifications.map((spec) => ({
+            label: spec.label,
+            value: spec.value,
+            displayOrder: spec.displayOrder,
+          })),
+        },
+
+        categories: {
+          create: uniqueCategoryIds.map(
+            (categoryId) => ({
               categoryId,
-            })),
-          },
+            })
+          ),
+        },
 
-          marketplaceLinks: {
-            create: marketplaceLinks.map((link) => ({
-              marketplaceId: link.marketplaceId,
+        marketplaceLinks: {
+          create: uniqueMarketplaceLinks.map(
+            (link) => ({
+              marketplaceId:
+                link.marketplaceId,
+
               url: link.url,
               isActive: link.isActive,
-              displayOrder: link.displayOrder,
-            })),
-          },
-        },
 
-        include: {
-          images: true,
-          specifications: true,
-          categories: {
-            include: { category: true },
-          },
-          marketplaceLinks: {
-            include: { marketplace: true },
-          },
+              displayOrder:
+                link.displayOrder,
+            })
+          ),
         },
-      });
+      },
+
+      include: productInclude,
     });
+
+    // REFRESH WEBSITE AND ADMIN PANEL
+
+    refreshAdmin('/admin/products');
 
     return NextResponse.json(
       {
         success: true,
         product,
+        message:
+          'Product created successfully.',
       },
-      { status: 201 }
+      {
+        status: 201,
+      }
     );
-  } catch (error: unknown) {
-    console.error('Create product error:', error);
-
-    if (
-      error instanceof Error &&
-      'code' in error &&
-      error.code === 'P2002'
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            'Product with this slug already exists',
-        },
-        { status: 409 }
-      );
-    }
-
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+  } catch (error) {
+    return apiError(error, 'Product');
   }
 }

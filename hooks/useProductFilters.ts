@@ -1,59 +1,130 @@
+
 'use client';
 
-import { useState, useMemo } from 'react';
-import { Product, SortOption } from '@/types';
+import {
+  useMemo,
+  useState,
+} from 'react';
 
-export function useProductFilters(products: Product[], initialView: string = 'Home') {
-  const [view, setView] = useState<string>(initialView);
-  const [search, setSearch] = useState<string>('');
-  const [showSearch, setShowSearch] = useState<boolean>(false);
-  const [sort, setSort] = useState<SortOption>('featured');
+import type {
+  Product,
+  SortOption,
+} from '@/types';
 
-  // Dynamic max price from actual catalog
+export function useProductFilters(
+  products: Product[],
+  initialView: string = 'Home'
+) {
+  const [view, setView] = useState(initialView);
+  const [search, setSearch] = useState('');
+  const [showSearch, setShowSearch] = useState(false);
+
+  const [sort, setSort] =
+    useState<SortOption>('featured');
+
+  const [priceLimit, setPriceLimit] =
+    useState<number | null>(null);
+
   const catalogMaxPrice = useMemo(() => {
-    if (products.length === 0) return 10000;
-    return Math.max(...products.map((p) => p.originalPrice ?? p.price), 10000);
+    const highest = products.reduce(
+      (maximum, product) =>
+        Math.max(
+          maximum,
+          product.price,
+          product.originalPrice ?? 0
+        ),
+      10000
+    );
+
+    return Math.ceil(highest / 100) * 100;
   }, [products]);
 
-  const [maxPrice, setMaxPrice] = useState<number>(catalogMaxPrice);
+  const maxPrice =
+    priceLimit === null
+      ? catalogMaxPrice
+      : Math.min(priceLimit, catalogMaxPrice);
+
+  const setMaxPrice = (value: number) => {
+    if (!Number.isFinite(value)) return;
+
+    setPriceLimit(
+      value >= catalogMaxPrice
+        ? null
+        : Math.max(0, value)
+    );
+  };
 
   const filteredProducts = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
     return products
-      .filter((p) => {
-        // Only show ACTIVE and SOLD_OUT products on public site
-        if (p.status !== 'ACTIVE' && p.status !== 'SOLD_OUT') return false;
+      .filter((product) => {
+        if (
+          product.status !== 'ACTIVE' &&
+          product.status !== 'SOLD_OUT'
+        ) {
+          return false;
+        }
 
         const matchesCategory =
-          view === 'Shop All' ||
           view === 'Home' ||
+          view === 'Shop All' ||
           view === 'Professional Collection' ||
-          p.category === view;
+          product.category === view;
 
-        const matchesPrice = p.price <= maxPrice;
+        const matchesPrice =
+          product.price <= maxPrice;
 
-        const matchesSearch = (p.name + ' ' + p.category)
-          .toLowerCase()
-          .includes(search.toLowerCase());
+        const searchableText = [
+          product.name,
+          product.category,
+          product.description,
+          product.shortDescription ?? '',
+          ...product.specs,
+        ].join(' ').toLowerCase();
 
-        return matchesCategory && matchesPrice && matchesSearch;
+        return (
+          matchesCategory &&
+          matchesPrice &&
+          searchableText.includes(query)
+        );
       })
       .sort((a, b) => {
-        if (sort === 'low') return a.price - b.price;
-        if (sort === 'high') return b.price - a.price;
-        if (sort === 'newest') {
-          const aDate = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
-          const bDate = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
-          return bDate - aDate;
+        switch (sort) {
+          case 'low':
+            return a.price - b.price;
+
+          case 'high':
+            return b.price - a.price;
+
+          case 'newest':
+            return (
+              (b.publishedAt
+                ? Date.parse(b.publishedAt) || 0
+                : 0) -
+              (a.publishedAt
+                ? Date.parse(a.publishedAt) || 0
+                : 0)
+            );
+
+          default:
+            return (
+              Number(b.isFeatured) -
+                Number(a.isFeatured) ||
+              a.displayOrder - b.displayOrder
+            );
         }
-        // 'featured': featured first, then by displayOrder
-        if (a.isFeatured && !b.isFeatured) return -1;
-        if (!a.isFeatured && b.isFeatured) return 1;
-        return a.displayOrder - b.displayOrder;
       });
-  }, [products, view, maxPrice, search, sort]);
+  }, [
+    products,
+    view,
+    search,
+    maxPrice,
+    sort,
+  ]);
 
   const clearFilters = () => {
-    setMaxPrice(catalogMaxPrice);
+    setPriceLimit(null);
     setSearch('');
     setSort('featured');
   };

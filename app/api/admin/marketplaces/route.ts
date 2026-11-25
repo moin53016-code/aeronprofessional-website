@@ -3,80 +3,192 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { z } from 'zod';
 
+import {
+  adminDenied,
+  apiError,
+  badInput,
+  refreshAdmin,
+} from '@/lib/admin-api';
+
+// MARKETPLACE VALIDATION
+
 const marketplaceSchema = z.object({
-  name: z.string().trim().min(1),
-  slug: z.string().trim().min(1),
-  badgeText: z.string().nullable().optional(),
-  tagline: z.string().nullable().optional(),
-  url: z.string().url().refine(
-    (url) => url.startsWith('https://'),
-    'HTTPS link required'
-  ),
+  name: z
+    .string()
+    .trim()
+    .min(1, 'Marketplace name is required')
+    .max(150),
+
+  slug: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .min(1)
+    .max(150)
+    .regex(
+      /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+      'Invalid marketplace slug'
+    ),
+
+  badgeText: z
+    .string()
+    .trim()
+    .max(100)
+    .nullable()
+    .optional(),
+
+  tagline: z
+    .string()
+    .trim()
+    .max(500)
+    .nullable()
+    .optional(),
+
+  url: z
+    .string()
+    .trim()
+    .max(2048)
+    .url('Enter a valid marketplace URL')
+    .refine(
+      (value) => {
+        try {
+          const url = new URL(value);
+
+          return (
+            url.protocol === 'https:' &&
+            !url.username &&
+            !url.password
+          );
+        } catch {
+          return false;
+        }
+      },
+      'Marketplace URL must be a valid HTTPS link'
+    ),
 });
+
+// GET ALL MARKETPLACES
 
 export async function GET() {
   try {
-    const marketplaces = await prisma.marketplace.findMany({
-      orderBy: { createdAt: 'asc' },
-    });
+    const denied = await adminDenied();
+
+    if (denied) return denied;
+
+    const marketplaces =
+      await prisma.marketplace.findMany({
+        orderBy: [
+          {
+            createdAt: 'asc',
+          },
+          {
+            id: 'asc',
+          },
+        ],
+      });
 
     return NextResponse.json({
       success: true,
       marketplaces,
     });
   } catch (error) {
-    console.error('Marketplace GET error:', error);
-
-    return NextResponse.json(
-      { error: 'Failed to fetch marketplaces' },
-      { status: 500 }
-    );
+    return apiError(error, 'Marketplace');
   }
 }
 
-export async function POST(request: NextRequest) {
+// CREATE NEW MARKETPLACE
+
+export async function POST(
+  request: NextRequest
+) {
   try {
-    const body = await request.json();
-    const parsed = marketplaceSchema.safeParse(body);
+    const denied = await adminDenied();
+
+    if (denied) return denied;
+
+    const body = await request
+      .json()
+      .catch(() => null);
+
+    const parsed =
+      marketplaceSchema.safeParse(body);
 
     if (!parsed.success) {
+      return badInput(
+        'Invalid marketplace information.',
+        parsed.error.flatten()
+      );
+    }
+
+    const {
+      name,
+      slug,
+      badgeText,
+      tagline,
+      url,
+    } = parsed.data;
+
+    // CHECK FOR DUPLICATE MARKETPLACE
+
+    const existingMarketplace =
+      await prisma.marketplace.findFirst({
+        where: {
+          OR: [
+            {
+              slug,
+            },
+            {
+              name: {
+                equals: name,
+                mode: 'insensitive',
+              },
+            },
+          ],
+        },
+      });
+
+    if (existingMarketplace) {
       return NextResponse.json(
         {
-          error: 'Invalid marketplace information',
-          details: parsed.error.flatten(),
+          error:
+            'A marketplace with this name or slug already exists.',
         },
-        { status: 400 }
+        {
+          status: 409,
+        }
       );
     }
 
-    const marketplace = await prisma.marketplace.create({
-      data: {
-        name: parsed.data.name,
-        slug: parsed.data.slug,
-        badgeText: parsed.data.badgeText || null,
-        tagline: parsed.data.tagline || null,
-        url: parsed.data.url,
-        isActive: true,
+    // CREATE MARKETPLACE
+
+    const marketplace =
+      await prisma.marketplace.create({
+        data: {
+          name,
+          slug,
+          badgeText: badgeText || null,
+          tagline: tagline || null,
+          url,
+          isActive: true,
+        },
+      });
+
+    // REFRESH STOREFRONT AND ADMIN PANEL
+
+    refreshAdmin('/admin/marketplaces');
+
+    return NextResponse.json(
+      {
+        success: true,
+        marketplace,
+        message:
+          'Marketplace created successfully.',
       },
-    });
-
-    return NextResponse.json(
-      { success: true, marketplace },
-      { status: 201 }
+      {
+        status: 201,
+      }
     );
-  } catch (error: any) {
-    console.error('Marketplace POST error:', error);
-
-    if (error.code === 'P2002') {
-      return NextResponse.json(
-        { error: 'Marketplace name already exists' },
-        { status: 409 }
-      );
-    }
-
-    return NextResponse.json(
-      { error: 'Failed to create marketplace' },
-      { status: 500 }
-    );
+  } catch (error) {
+    return apiError(error, 'Marketplace');
   }
 }

@@ -1,44 +1,116 @@
+
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 
+import {
+  adminDenied,
+  apiError,
+  badInput,
+} from '@/lib/admin-api';
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+
+// SUPPORTED IMAGE FORMATS
+
+const allowedContentTypes = z.enum([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+]);
+
+// UPLOAD REQUEST VALIDATION
+
 const presignSchema = z.object({
-  filename: z.string().min(1),
-  contentType: z.string().min(1),
-  size: z.number().int().positive().max(10 * 1024 * 1024), // 10MB max
+  filename: z
+    .string()
+    .trim()
+    .min(1, 'Filename is required')
+    .max(255),
+
+  contentType: allowedContentTypes,
+
+  size: z
+    .number()
+    .int()
+    .positive()
+    .max(
+      MAX_FILE_SIZE,
+      'Maximum image size is 10 MB'
+    ),
 });
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const result = presignSchema.safeParse(body);
+// PREPARE IMAGE UPLOAD
 
-    if (!result.success) {
-      return NextResponse.json(
-        { error: 'Invalid input', details: result.error.flatten() },
-        { status: 400 }
+export async function POST(
+  request: NextRequest
+) {
+  try {
+    // VERIFY ADMIN SESSION
+
+    const denied = await adminDenied();
+
+    if (denied) return denied;
+
+    // VALIDATE REQUEST BODY
+
+    const body = await request
+      .json()
+      .catch(() => null);
+
+    const parsed =
+      presignSchema.safeParse(body);
+
+    if (!parsed.success) {
+      return badInput(
+        'Invalid image upload information.',
+        parsed.error.flatten()
       );
     }
 
-    const { filename, contentType } = result.data;
-    const cleanName = filename.replace(/[^a-zA-Z0-9.-]/g, '_');
-    const key = `uploads/${Date.now()}-${cleanName}`;
+    const {
+      filename,
+      contentType,
+      size,
+    } = parsed.data;
 
-    const r2PublicBase = process.env.R2_PUBLIC_BASE_URL || 'https://pub-xxx.r2.dev';
-    const publicUrl = `${r2PublicBase.replace(/\/$/, '')}/${key}`;
+    // SANITIZE ORIGINAL FILENAME
 
-    // Return the upload metadata and target public URL
-    // Can also accept direct multipart uploads on /api/admin/upload
+    const cleanFilename = filename.replace(
+      /[^a-zA-Z0-9._-]/g,
+      '_'
+    );
+
+    // USE EXISTING MULTIPART UPLOAD ENDPOINT
+    // DO NOT RETURN FAKE R2 PUBLIC URL
+
     return NextResponse.json({
       success: true,
-      key,
-      uploadUrl: `/api/admin/upload`,
-      publicUrl,
-      headers: {
-        'Content-Type': contentType,
-      },
+
+      storage: 'local',
+
+      uploadUrl: '/api/admin/upload',
+
+      method: 'POST',
+
+      uploadType: 'multipart/form-data',
+
+      fieldName: 'file',
+
+      filename: cleanFilename,
+
+      contentType,
+
+      size,
+
+      publicUrl: null,
+
+      maxFileSize: MAX_FILE_SIZE,
+
+      message:
+        'Upload the image using multipart form data. The final image URL will be returned after a successful upload.',
     });
   } catch (error) {
-    console.error('Presign error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return apiError(error, 'Image upload');
   }
 }

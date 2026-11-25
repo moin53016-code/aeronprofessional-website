@@ -1,33 +1,97 @@
-import { prisma } from '@/lib/db';
+
 import Link from 'next/link';
-import { Package, Tags, Image, Percent, Plus } from 'lucide-react';
+
+import {
+  Package,
+  Tags,
+  Image,
+  Percent,
+  Plus,
+  Settings,
+  Globe,
+  FileText,
+} from 'lucide-react';
+
+import { prisma } from '@/lib/db';
+import { requireAdminPage } from '@/lib/admin-page';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
+// LOAD DASHBOARD STATISTICS
 
 async function getDashboardStats() {
-  try {
-    const [
-      totalProducts, activeProducts, soldOutProducts, draftProducts, archivedProducts,
-      totalCategories, activeBanners, activeDiscounts,
-      recentProducts,
-    ] = await Promise.all([
-      prisma.product.count(),
-      prisma.product.count({ where: { status: 'ACTIVE' } }),
-      prisma.product.count({ where: { status: 'SOLD_OUT' } }),
-      prisma.product.count({ where: { status: 'DRAFT' } }),
-      prisma.product.count({ where: { status: 'ARCHIVED' } }),
-      prisma.category.count({ where: { isPublished: true } }),
-      prisma.homepageBanner.count({ where: { isActive: true } }),
-      prisma.discountCampaign.count({ where: { isActive: true } }),
-      prisma.product.findMany({
-        take: 5,
-        orderBy: { updatedAt: 'desc' },
-        select: { id: true, name: true, status: true, updatedAt: true },
-      }),
-    ]);
-    return { totalProducts, activeProducts, soldOutProducts, draftProducts, archivedProducts, totalCategories, activeBanners, activeDiscounts, recentProducts };
-  } catch {
-    return { totalProducts: 0, activeProducts: 0, soldOutProducts: 0, draftProducts: 0, archivedProducts: 0, totalCategories: 0, activeBanners: 0, activeDiscounts: 0, recentProducts: [] };
-  }
+  const [
+    totalProducts,
+    activeProducts,
+    soldOutProducts,
+    draftProducts,
+    archivedProducts,
+    totalCategories,
+    activeBanners,
+    activeDiscounts,
+    recentProducts,
+  ] = await Promise.all([
+    prisma.product.count(),
+
+    prisma.product.count({
+      where: { status: 'ACTIVE' },
+    }),
+
+    prisma.product.count({
+      where: { status: 'SOLD_OUT' },
+    }),
+
+    prisma.product.count({
+      where: { status: 'DRAFT' },
+    }),
+
+    prisma.product.count({
+      where: { status: 'ARCHIVED' },
+    }),
+
+    prisma.category.count({
+      where: { isPublished: true },
+    }),
+
+    prisma.homepageBanner.count({
+      where: { isActive: true },
+    }),
+
+    prisma.discountCampaign.count({
+      where: { isActive: true },
+    }),
+
+    prisma.product.findMany({
+      take: 5,
+
+      orderBy: {
+        updatedAt: 'desc',
+      },
+
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        updatedAt: true,
+      },
+    }),
+  ]);
+
+  return {
+    totalProducts,
+    activeProducts,
+    soldOutProducts,
+    draftProducts,
+    archivedProducts,
+    totalCategories,
+    activeBanners,
+    activeDiscounts,
+    recentProducts,
+  };
 }
+
+// PRODUCT STATUS COLORS
 
 const statusColors: Record<string, string> = {
   ACTIVE: 'bg-green-100 text-green-700',
@@ -36,89 +100,350 @@ const statusColors: Record<string, string> = {
   ARCHIVED: 'bg-red-100 text-red-600',
 };
 
+// ADMIN DASHBOARD
+
 export default async function AdminDashboardPage() {
+  await requireAdminPage();
+
   const stats = await getDashboardStats();
 
+  const quickActions = [
+    {
+      href: '/admin/products/new',
+      icon: Package,
+      label: 'Add Product',
+    },
+    {
+      href: '/admin/categories',
+      icon: Tags,
+      label: 'Manage Categories',
+    },
+    {
+      href: '/admin/banners',
+      icon: Image,
+      label: 'Manage Banners',
+    },
+    {
+      href: '/admin/discounts',
+      icon: Percent,
+      label: 'Manage Discounts',
+    },
+    {
+      href: '/admin/marketplaces',
+      icon: Globe,
+      label: 'Marketplaces',
+    },
+    {
+      href: '/admin/content',
+      icon: FileText,
+      label: 'Manage FAQs',
+    },
+    {
+      href: '/admin/settings',
+      icon: Settings,
+      label: 'Website Settings',
+    },
+  ];
+
   return (
-    <div>
-      <div className="flex items-center justify-between mb-8">
+    <div className="w-full min-w-0">
+
+      {/* DASHBOARD HEADING */}
+
+      <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-sm text-gray-500 mt-1">AERON PROFESSIONAL Admin Overview</p>
+          <h1 className="text-2xl font-bold text-gray-900">
+            Dashboard
+          </h1>
+
+          <p className="mt-1 text-sm text-gray-500">
+            AERON PROFESSIONAL Admin Overview
+          </p>
         </div>
-        <Link href="/admin/products/new" className="flex items-center gap-2 bg-black text-white px-4 py-2 text-xs font-bold tracking-wider hover:bg-gray-800 transition">
-          <Plus size={14} /> ADD PRODUCT
+
+        <Link
+          href="/admin/products/new"
+          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-black px-4 py-3 text-xs font-bold tracking-wider text-white transition hover:bg-gray-800"
+        >
+          <Plus size={16} />
+          ADD PRODUCT
         </Link>
+
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <div className="bg-white p-5 border border-gray-200">
-          <div className="text-3xl font-bold text-gray-900">{stats.totalProducts}</div>
-          <div className="text-xs text-gray-500 mt-1 uppercase tracking-wider">Total Products</div>
-          <div className="mt-3 space-y-1">
-            <div className="flex justify-between text-xs"><span className="text-green-600">Active</span><span>{stats.activeProducts}</span></div>
-            <div className="flex justify-between text-xs"><span className="text-orange-600">Sold Out</span><span>{stats.soldOutProducts}</span></div>
-            <div className="flex justify-between text-xs"><span className="text-gray-500">Draft</span><span>{stats.draftProducts}</span></div>
-            <div className="flex justify-between text-xs"><span className="text-red-500">Archived</span><span>{stats.archivedProducts}</span></div>
+      {/* DASHBOARD STATISTICS */}
+
+      <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+
+        {/* TOTAL PRODUCTS */}
+
+        <div className="min-w-0 rounded-lg border border-gray-200 bg-white p-5">
+
+          <Package
+            size={22}
+            className="mb-4 text-[#977447]"
+          />
+
+          <div className="text-3xl font-bold text-gray-900">
+            {stats.totalProducts}
           </div>
+
+          <div className="mt-1 text-xs uppercase tracking-wider text-gray-500">
+            Total Products
+          </div>
+
+          <div className="mt-4 space-y-2 border-t border-gray-100 pt-4">
+
+            <div className="flex justify-between text-xs">
+              <span className="text-green-600">
+                Active
+              </span>
+              <span>{stats.activeProducts}</span>
+            </div>
+
+            <div className="flex justify-between text-xs">
+              <span className="text-orange-600">
+                Sold Out
+              </span>
+              <span>{stats.soldOutProducts}</span>
+            </div>
+
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-500">
+                Draft
+              </span>
+              <span>{stats.draftProducts}</span>
+            </div>
+
+            <div className="flex justify-between text-xs">
+              <span className="text-red-500">
+                Archived
+              </span>
+              <span>{stats.archivedProducts}</span>
+            </div>
+
+          </div>
+
         </div>
-        <div className="bg-white p-5 border border-gray-200">
-          <div className="text-3xl font-bold text-gray-900">{stats.totalCategories}</div>
-          <div className="text-xs text-gray-500 mt-1 uppercase tracking-wider">Categories</div>
+
+        {/* CATEGORIES */}
+
+        <div className="min-w-0 rounded-lg border border-gray-200 bg-white p-5">
+
+          <Tags
+            size={22}
+            className="mb-4 text-[#977447]"
+          />
+
+          <div className="text-3xl font-bold text-gray-900">
+            {stats.totalCategories}
+          </div>
+
+          <div className="mt-1 text-xs uppercase tracking-wider text-gray-500">
+            Published Categories
+          </div>
+
+          <Link
+            href="/admin/categories"
+            className="mt-5 inline-block text-xs font-medium text-[#977447] hover:underline"
+          >
+            Manage categories →
+          </Link>
+
         </div>
-        <div className="bg-white p-5 border border-gray-200">
-          <div className="text-3xl font-bold text-gray-900">{stats.activeBanners}</div>
-          <div className="text-xs text-gray-500 mt-1 uppercase tracking-wider">Active Banners</div>
+
+        {/* BANNERS */}
+
+        <div className="min-w-0 rounded-lg border border-gray-200 bg-white p-5">
+
+          <Image
+            size={22}
+            className="mb-4 text-[#977447]"
+          />
+
+          <div className="text-3xl font-bold text-gray-900">
+            {stats.activeBanners}
+          </div>
+
+          <div className="mt-1 text-xs uppercase tracking-wider text-gray-500">
+            Enabled Banners
+          </div>
+
+          <Link
+            href="/admin/banners"
+            className="mt-5 inline-block text-xs font-medium text-[#977447] hover:underline"
+          >
+            Manage banners →
+          </Link>
+
         </div>
-        <div className="bg-white p-5 border border-gray-200">
-          <div className="text-3xl font-bold text-gray-900">{stats.activeDiscounts}</div>
-          <div className="text-xs text-gray-500 mt-1 uppercase tracking-wider">Active Discounts</div>
+
+        {/* DISCOUNTS */}
+
+        <div className="min-w-0 rounded-lg border border-gray-200 bg-white p-5">
+
+          <Percent
+            size={22}
+            className="mb-4 text-[#977447]"
+          />
+
+          <div className="text-3xl font-bold text-gray-900">
+            {stats.activeDiscounts}
+          </div>
+
+          <div className="mt-1 text-xs uppercase tracking-wider text-gray-500">
+            Enabled Discounts
+          </div>
+
+          <Link
+            href="/admin/discounts"
+            className="mt-5 inline-block text-xs font-medium text-[#977447] hover:underline"
+          >
+            Manage discounts →
+          </Link>
+
         </div>
+
       </div>
 
-      <div className="grid md:grid-cols-2 gap-6">
-        {/* Recent Products */}
-        <div className="bg-white border border-gray-200 p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-gray-900">Recently Updated Products</h2>
-            <Link href="/admin/products" className="text-xs text-gray-500 hover:text-black">View all →</Link>
+      {/* RECENT PRODUCTS AND QUICK ACTIONS */}
+
+      <div className="grid min-w-0 gap-6 xl:grid-cols-2">
+
+        {/* RECENT PRODUCTS */}
+
+        <section className="min-w-0 rounded-lg border border-gray-200 bg-white p-5">
+
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+
+            <h2 className="font-semibold text-gray-900">
+              Recently Updated Products
+            </h2>
+
+            <Link
+              href="/admin/products"
+              className="text-xs font-medium text-gray-500 hover:text-black"
+            >
+              View all →
+            </Link>
+
           </div>
-          <div className="space-y-3">
-            {stats.recentProducts.length === 0 && <p className="text-sm text-gray-400">No products yet.</p>}
-            {stats.recentProducts.map((p) => (
-              <div key={p.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-                <div>
-                  <Link href={`/admin/products/${p.id}/edit`} className="text-sm font-medium hover:text-[#9e7b50] transition">{p.name}</Link>
-                  <p className="text-xs text-gray-400">{new Date(p.updatedAt).toLocaleDateString()}</p>
+
+          {stats.recentProducts.length === 0 ? (
+
+            <div className="rounded-md border border-dashed border-gray-200 py-10 text-center">
+
+              <Package
+                size={28}
+                className="mx-auto text-gray-400"
+              />
+
+              <p className="mt-3 text-sm text-gray-500">
+                No products added yet.
+              </p>
+
+              <Link
+                href="/admin/products/new"
+                className="mt-3 inline-block text-xs font-semibold text-[#977447] hover:underline"
+              >
+                Add your first product
+              </Link>
+
+            </div>
+
+          ) : (
+
+            <div className="divide-y divide-gray-100">
+
+              {stats.recentProducts.map((product) => (
+
+                <div
+                  key={product.id}
+                  className="flex min-w-0 items-center justify-between gap-3 py-4"
+                >
+
+                  <div className="min-w-0">
+
+                    <Link
+                      href={`/admin/products/${product.id}/edit`}
+                      className="break-words text-sm font-medium text-gray-900 transition hover:text-[#977447]"
+                    >
+                      {product.name}
+                    </Link>
+
+                    <p className="mt-1 text-xs text-gray-400">
+                      {product.updatedAt.toLocaleDateString(
+                        'en-IN',
+                        {
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric',
+                          timeZone: 'Asia/Kolkata',
+                        }
+                      )}
+                    </p>
+
+                  </div>
+
+                  <span
+                    className={`shrink-0 rounded px-2 py-1 text-[9px] font-bold uppercase ${
+                      statusColors[product.status] ||
+                      'bg-gray-100 text-gray-600'
+                    }`}
+                  >
+                    {product.status.replace(/_/g, ' ')}
+                  </span>
+
                 </div>
-                <span className={`text-[9px] font-bold uppercase px-2 py-1 ${statusColors[p.status] || 'bg-gray-100'}`}>{p.status}</span>
-              </div>
-            ))}
-          </div>
-        </div>
 
-        {/* Quick Actions */}
-        <div className="bg-white border border-gray-200 p-5">
-          <h2 className="font-semibold text-gray-900 mb-4">Quick Actions</h2>
+              ))}
+
+            </div>
+
+          )}
+
+        </section>
+
+        {/* QUICK ACTIONS */}
+
+        <section className="min-w-0 rounded-lg border border-gray-200 bg-white p-5">
+
+          <h2 className="mb-5 font-semibold text-gray-900">
+            Quick Actions
+          </h2>
+
           <div className="grid grid-cols-2 gap-3">
-            {[
-              { href: '/admin/products/new', icon: Package, label: 'Add Product' },
-              { href: '/admin/categories', icon: Tags, label: 'Manage Categories' },
-              { href: '/admin/banners', icon: Image, label: 'Edit Banners' },
-              { href: '/admin/settings', icon: Percent, label: 'Site Settings' },
-            ].map((action) => {
+
+            {quickActions.map((action) => {
               const Icon = action.icon;
+
               return (
-                <Link key={action.href} href={action.href} className="flex flex-col items-center gap-2 p-4 border border-gray-200 hover:border-black hover:bg-gray-50 transition text-center">
-                  <Icon size={20} className="text-gray-600" />
-                  <span className="text-xs font-semibold">{action.label}</span>
+                <Link
+                  key={action.href}
+                  href={action.href}
+                  className="group flex min-w-0 flex-col items-center justify-center gap-3 rounded-md border border-gray-200 p-5 text-center transition hover:border-[#977447] hover:bg-[#faf9f6]"
+                >
+
+                  <Icon
+                    size={23}
+                    className="text-gray-600 transition group-hover:text-[#977447]"
+                  />
+
+                  <span className="text-xs font-semibold text-gray-700">
+                    {action.label}
+                  </span>
+
                 </Link>
               );
             })}
+
           </div>
-        </div>
+
+        </section>
+
       </div>
+
     </div>
   );
 }

@@ -1,67 +1,112 @@
 
 import { prisma } from '@/lib/db';
+import { requireAdminPage } from '@/lib/admin-page';
+
 import CategoryList from '@/components/admin/CategoryList';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export default async function CategoriesPage() {
-  try {
-    const categories = await prisma.category.findMany({
-      orderBy: [
-        { displayOrder: 'asc' },
-        { createdAt: 'desc' },
-      ],
-    });
+  // VERIFY ADMIN SESSION
 
-    return (
-      <div className="w-full min-w-0">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">
-            Categories
-          </h1>
+  await requireAdminPage();
 
-          <p className="mt-1 text-sm text-gray-500">
-            {categories.length} categories
-          </p>
-        </div>
+  // LOAD ALL CATEGORIES FROM DATABASE
 
-        <CategoryList initialCategories={categories} />
-      </div>
-    );
-  } catch (error) {
-    console.error(
-      'FAILED TO LOAD ADMIN CATEGORIES:',
-      error
-    );
+  const categories = await prisma.category.findMany({
+    orderBy: [
+      {
+        displayOrder: 'asc',
+      },
+      {
+        createdAt: 'desc',
+      },
+      {
+        id: 'asc',
+      },
+    ],
+  });
 
-    return (
-      <div className="w-full">
-        <h1 className="mb-5 text-2xl font-bold text-gray-900">
+  // CALCULATE CATEGORY STATISTICS
+
+  const totalCategories = categories.length;
+
+  const publishedCategories = categories.filter(
+    (category) => category.isPublished
+  ).length;
+
+  const visibleCategories = categories.filter(
+    (category) =>
+      category.isPublished &&
+      category.isVisible
+  ).length;
+
+  return (
+    <div className="w-full min-w-0">
+
+      {/* PAGE HEADING */}
+
+      <div className="mb-6">
+
+        <h1 className="text-2xl font-bold text-gray-900">
           Categories
         </h1>
 
-        <div className="rounded-lg border border-red-200 bg-red-50 p-6">
-          <h2 className="text-lg font-semibold text-red-700">
-            Unable to load categories
-          </h2>
+        <p className="mt-1 text-sm text-gray-500">
+          Manage your AERON product categories.
+        </p>
 
-          <p className="mt-2 text-sm leading-6 text-red-600">
-            Could not fetch categories from the database.
-            Your categories may still be saved in Neon.
-          </p>
-
-          <p className="mt-3 text-sm text-gray-700">
-            Check the terminal for the database error.
-            Verify DATABASE_URL and the Neon connection.
-          </p>
-
-          <p className="mt-3 text-xs text-gray-500">
-            Category creation and deletion are disabled
-            until the database connection is working.
-          </p>
-        </div>
       </div>
-    );
-  }
+
+      {/* CATEGORY STATISTICS */}
+
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+
+        <div className="rounded-lg border border-gray-200 bg-white p-4">
+
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+            Total Categories
+          </p>
+
+          <p className="mt-2 text-2xl font-bold text-gray-900">
+            {totalCategories}
+          </p>
+
+        </div>
+
+        <div className="rounded-lg border border-gray-200 bg-white p-4">
+
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+            Published
+          </p>
+
+          <p className="mt-2 text-2xl font-bold text-green-700">
+            {publishedCategories}
+          </p>
+
+        </div>
+
+        <div className="rounded-lg border border-gray-200 bg-white p-4">
+
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+            Visible on Website
+          </p>
+
+          <p className="mt-2 text-2xl font-bold text-[#977447]">
+            {visibleCategories}
+          </p>
+
+        </div>
+
+      </div>
+
+      {/* CATEGORY MANAGEMENT */}
+
+      <CategoryList
+        initialCategories={categories}
+      />
+
+    </div>
+  );
 }

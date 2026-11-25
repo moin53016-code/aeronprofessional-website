@@ -1,16 +1,64 @@
+
 import { prisma } from '@/lib/db';
+import { requireAdminPage } from '@/lib/admin-page';
+
 import SettingsForm from '@/components/admin/SettingsForm';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export default async function SettingsPage() {
-  const rows = await prisma.siteSetting.findMany().catch(() => []);
-  const settings = Object.fromEntries(rows.map((r) => [r.key, r.value ?? '']));
+  // VERIFY ADMIN SESSION
+
+  await requireAdminPage();
+
+  // LOAD WEBSITE SETTINGS
+
+  const rows = await prisma.siteSetting.findMany({
+    orderBy: {
+      key: 'asc',
+    },
+
+    select: {
+      key: true,
+      value: true,
+    },
+  });
+
+  // CONVERT DATABASE SETTINGS INTO FORM DATA
+
+  const settings: Record<string, string> =
+    Object.fromEntries(
+      rows.map((row) => [
+        row.key,
+        row.value ?? '',
+      ])
+    );
+
   return (
-    <div>
+    <div className="w-full min-w-0">
+
+      {/* PAGE HEADING */}
+
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Website Settings</h1>
-        <p className="text-sm text-gray-500 mt-1">Global brand and contact configuration</p>
+
+        <h1 className="text-2xl font-bold text-gray-900">
+          Website Settings
+        </h1>
+
+        <p className="mt-1 text-sm leading-6 text-gray-500">
+          Manage global brand information,
+          contact details and website configuration.
+        </p>
+
       </div>
-      <SettingsForm initialSettings={settings} />
+
+      {/* WEBSITE SETTINGS FORM */}
+
+      <SettingsForm
+        initialSettings={settings}
+      />
+
     </div>
   );
 }

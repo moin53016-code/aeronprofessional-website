@@ -1,73 +1,197 @@
+
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { z } from 'zod';
 
+import {
+  adminDenied,
+  apiError,
+  badInput,
+  refreshAdmin,
+} from '@/lib/admin-api';
+
+// DISCOUNT CAMPAIGN VALIDATION
+
 const createDiscountSchema = z.object({
-  name: z.string().min(1),
-  description: z.string().optional().nullable(),
-  discountLabel: z.string().optional().nullable(),
+  name: z.string().trim().min(1).max(200),
+
+  description: z
+    .string()
+    .trim()
+    .nullable()
+    .optional(),
+
+  discountLabel: z
+    .string()
+    .trim()
+    .nullable()
+    .optional(),
+
   isActive: z.boolean().default(true),
-  startsAt: z.string().datetime().optional().nullable(),
-  endsAt: z.string().datetime().optional().nullable(),
-  productIds: z.array(z.string()).default([]),
+
+  startsAt: z
+    .string()
+    .datetime({ offset: true })
+    .nullable()
+    .optional(),
+
+  endsAt: z
+    .string()
+    .datetime({ offset: true })
+    .nullable()
+    .optional(),
+
+  productIds: z
+    .array(z.string().min(1))
+    .default([]),
 });
+
+// GET ALL DISCOUNT CAMPAIGNS
 
 export async function GET() {
   try {
-    const discounts = await prisma.discountCampaign.findMany({
-      include: {
-        discountProducts: {
-          include: {
-            product: {
-              select: {
-                id: true,
-                name: true,
-                slug: true,
-                priceInPaise: true,
-                originalPriceInPaise: true,
-                primaryImageUrl: true,
-                status: true,
+    const denied = await adminDenied();
+
+    if (denied) return denied;
+
+    const discounts =
+      await prisma.discountCampaign.findMany({
+        include: {
+          discountProducts: {
+            include: {
+              product: {
+                select: {
+                  id: true,
+                  name: true,
+                  slug: true,
+                  priceInPaise: true,
+                  originalPriceInPaise: true,
+                  primaryImageUrl: true,
+                  status: true,
+                },
               },
             },
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
 
-    return NextResponse.json({ success: true, discounts });
+        orderBy: {
+          createdAt: 'desc',
+        },
+      });
+
+    return NextResponse.json({
+      success: true,
+      discounts,
+    });
   } catch (error) {
-    console.error('Fetch discount campaigns error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return apiError(error, 'Discount campaign');
   }
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const result = createDiscountSchema.safeParse(body);
+// CREATE DISCOUNT CAMPAIGN
 
-    if (!result.success) {
-      return NextResponse.json(
-        { error: 'Invalid input', details: result.error.flatten() },
-        { status: 400 }
+export async function POST(
+  request: NextRequest
+) {
+  try {
+    const denied = await adminDenied();
+
+    if (denied) return denied;
+
+    const body = await request
+      .json()
+      .catch(() => null);
+
+    const parsed =
+      createDiscountSchema.safeParse(body);
+
+    if (!parsed.success) {
+      return badInput(
+        'Invalid discount campaign data.',
+        parsed.error.flatten()
       );
     }
 
-    const { productIds, startsAt, endsAt, ...data } = result.data;
+    const {
+      productIds,
+      startsAt,
+      endsAt,
+      ...data
+    } = parsed.data;
 
-    const discount = await prisma.$transaction(async (tx) => {
-      const campaign = await tx.discountCampaign.create({
+    // VALIDATE CAMPAIGN DATES
+
+    const startDate = startsAt
+      ? new Date(startsAt)
+      : null;
+
+    const endDate = endsAt
+      ? new Date(endsAt)
+      : null;
+
+    if (
+      startDate &&
+      endDate &&
+      endDate < startDate
+    ) {
+      return badInput(
+        'End date cannot be before start date.'
+      );
+    }
+
+    // REMOVE DUPLICATE PRODUCT IDS
+
+    const uniqueProductIds = [
+      ...new Set(productIds),
+    ];
+
+    // VERIFY SELECTED PRODUCTS EXIST
+
+    if (uniqueProductIds.length > 0) {
+      const existingProducts =
+        await prisma.product.count({
+          where: {
+            id: {
+              in: uniqueProductIds,
+            },
+          },
+        });
+
+      if (
+        existingProducts !==
+        uniqueProductIds.length
+      ) {
+        return badInput(
+          'One or more selected products no longer exist.'
+        );
+      }
+    }
+
+    // CREATE CAMPAIGN AND PRODUCT ASSOCIATIONS
+
+    const discount =
+      await prisma.discountCampaign.create({
         data: {
           ...data,
-          startsAt: startsAt ? new Date(startsAt) : null,
-          endsAt: endsAt ? new Date(endsAt) : null,
+
+          description:
+            data.description || null,
+
+          discountLabel:
+            data.discountLabel || null,
+
+          startsAt: startDate,
+          endsAt: endDate,
+
           discountProducts: {
-            create: productIds.map((pId) => ({
-              productId: pId,
-            })),
+            create: uniqueProductIds.map(
+              (productId) => ({
+                productId,
+              })
+            ),
           },
         },
+
         include: {
           discountProducts: {
             include: {
@@ -76,12 +200,23 @@ export async function POST(request: NextRequest) {
           },
         },
       });
-      return campaign;
-    });
 
-    return NextResponse.json({ success: true, discount }, { status: 201 });
+    // REFRESH WEBSITE AND ADMIN PANEL
+
+    refreshAdmin('/admin/discounts');
+
+    return NextResponse.json(
+      {
+        success: true,
+        discount,
+        message:
+          'Discount campaign created successfully.',
+      },
+      {
+        status: 201,
+      }
+    );
   } catch (error) {
-    console.error('Create discount campaign error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return apiError(error, 'Discount campaign');
   }
 }
