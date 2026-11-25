@@ -1,12 +1,18 @@
+
 import React from 'react';
-import { Product, Category, PromoSlide } from '@/types';
+
+import type {
+  Product,
+  Category,
+  PromoSlide,
+} from '@/types';
+
 import { HeroSlider } from './HeroSlider';
 import { ValueProps } from './ValueProps';
 import { CategoryGrid } from './CategoryGrid';
 import { ProductShowcase } from './ProductShowcase';
 import { EditorialBanner } from './EditorialBanner';
 import { BrandDifference } from './BrandDifference';
-import { ComingSoonBanner } from './ComingSoonBanner';
 
 interface HomeViewProps {
   promoSlides: PromoSlide[];
@@ -29,25 +35,33 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onSelectProduct,
   onWhereToBuy,
 }) => {
-  // Use admin-managed flags instead of array positions
-  const featured = products
-    .filter((p) => p.isFeatured && (p.status === 'ACTIVE' || p.status === 'SOLD_OUT'))
-    .sort((a, b) => a.displayOrder - b.displayOrder)
+  const activeProducts = products
+    .filter(
+      (product) =>
+        product.status === 'ACTIVE' ||
+        product.status === 'SOLD_OUT'
+    )
+    .sort(
+      (a, b) => a.displayOrder - b.displayOrder
+    );
+
+  const featured = activeProducts
+    .filter((product) => product.isFeatured)
     .slice(0, 8);
 
-  const newArrivals = products
-    .filter((p) => p.isNew && (p.status === 'ACTIVE' || p.status === 'SOLD_OUT'))
-    .sort((a, b) => a.displayOrder - b.displayOrder)
+  const newArrivals = activeProducts
+    .filter((product) => product.isNew)
     .slice(0, 8);
 
-  // Fallback: if no featured/new set, show first N products
-  const showcaseFeatured = featured.length > 0
-    ? featured
-    : products.filter((p) => p.status === 'ACTIVE' || p.status === 'SOLD_OUT').slice(0, 4);
+  const showcaseFeatured =
+    featured.length > 0
+      ? featured
+      : activeProducts.slice(0, 4);
 
-  const showcaseNew = newArrivals.length > 0
-    ? newArrivals
-    : products.filter((p) => p.status === 'ACTIVE' || p.status === 'SOLD_OUT').slice(4, 8);
+  const showcaseNew =
+    newArrivals.length > 0
+      ? newArrivals
+      : activeProducts.slice(4, 8);
 
   return (
     <main>
@@ -62,7 +76,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
       <CategoryGrid
         categories={categories}
-        onSelectCategory={(categoryName) => onNavigate(categoryName)}
+        onSelectCategory={(categoryName) =>
+          onNavigate(categoryName)
+        }
       />
 
       <ProductShowcase
@@ -89,8 +105,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
       />
 
       <BrandDifference />
-
-      <ComingSoonBanner onNavigate={onNavigate} />
     </main>
   );
 };

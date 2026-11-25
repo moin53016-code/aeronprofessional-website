@@ -8,7 +8,7 @@ import React, {
 
 import { useRouter } from 'next/navigation';
 
-import {
+import type {
   Product,
   Category,
   PromoSlide,
@@ -29,14 +29,14 @@ import { HomeView } from '@/components/home/HomeView';
 import { ShopView } from '@/components/shop/ShopView';
 import { AboutView } from '@/components/about/AboutView';
 
-import { CustomerCareView } from '@/components/customer-care/CustomerCareView';
+import CustomerCareView from '@/components/customer-care/CustomerCareView';
 
 import { ProductDetailModal } from '@/components/modals/ProductDetailModal';
 import { WhereToBuyModal } from '@/components/modals/WhereToBuyModal';
 
 import {
   SupportModal,
-  SupportTab,
+  type SupportTab,
 } from '@/components/modals/SupportModal';
 
 interface StorefrontClientProps {
@@ -62,7 +62,7 @@ export default function StorefrontClient({
   const [
     isMobileMenuOpen,
     setIsMobileMenuOpen,
-  ] = useState<boolean>(false);
+  ] = useState(false);
 
   const [
     selectedProduct,
@@ -82,12 +82,7 @@ export default function StorefrontClient({
   const [
     activeSlide,
     setActiveSlide,
-  ] = useState<number>(0);
-
-  const [
-    notice,
-    setNotice,
-  ] = useState<string>('');
+  ] = useState(0);
 
   const {
     view,
@@ -105,95 +100,80 @@ export default function StorefrontClient({
     clearFilters,
   } = useProductFilters(products, 'Home');
 
-  // REFRESH ADMIN-MANAGED WEBSITE DATA
-  // Every 15 seconds while tab is visible.
+  // Refresh server data while the website is visible.
 
   useEffect(() => {
-    const refreshWebsite = () => {
+    const refreshVisiblePage = () => {
       if (document.visibilityState === 'visible') {
         router.refresh();
       }
     };
 
-    const interval = window.setInterval(
-      refreshWebsite,
+    const intervalId = window.setInterval(
+      refreshVisiblePage,
       15000
     );
 
     window.addEventListener(
       'focus',
-      refreshWebsite
+      refreshVisiblePage
     );
 
     document.addEventListener(
       'visibilitychange',
-      refreshWebsite
+      refreshVisiblePage
     );
 
     return () => {
-      window.clearInterval(interval);
+      window.clearInterval(intervalId);
 
       window.removeEventListener(
         'focus',
-        refreshWebsite
+        refreshVisiblePage
       );
 
       document.removeEventListener(
         'visibilitychange',
-        refreshWebsite
+        refreshVisiblePage
       );
     };
   }, [router]);
 
-  // KEEP PRODUCT MODALS UPDATED
+  // Keep the hero slider within its valid slide range.
 
   useEffect(() => {
-    if (selectedProduct) {
-      const latest = products.find(
-        (product) =>
-          product.id === selectedProduct.id
-      );
+    setActiveSlide((current) => {
+      if (promoSlides.length === 0) return 0;
 
-      if (!latest) {
-        setSelectedProduct(null);
-      } else if (latest !== selectedProduct) {
-        setSelectedProduct(latest);
-      }
-    }
+      return current >= promoSlides.length
+        ? 0
+        : current;
+    });
+  }, [promoSlides.length]);
 
-    if (whereToBuyProduct) {
-      const latest = products.find(
-        (product) =>
-          product.id === whereToBuyProduct.id
-      );
-
-      if (!latest) {
-        setWhereToBuyProduct(null);
-      } else if (latest !== whereToBuyProduct) {
-        setWhereToBuyProduct(latest);
-      }
-    }
-  }, [
-    products,
-    selectedProduct,
-    whereToBuyProduct,
-  ]);
-
-  // KEEP HERO SLIDER INDEX IN RANGE
+  // Update open product dialogs when admin data changes.
 
   useEffect(() => {
-    if (
-      promoSlides.length === 0 ||
-      activeSlide >= promoSlides.length
-    ) {
-      setActiveSlide(0);
-    }
-  }, [
-    promoSlides.length,
-    activeSlide,
-  ]);
+    setSelectedProduct((current) => {
+      if (!current) return null;
 
-  // MAIN NAVIGATION
+      return (
+        products.find(
+          (product) => product.id === current.id
+        ) ?? null
+      );
+    });
+
+    setWhereToBuyProduct((current) => {
+      if (!current) return null;
+
+      return (
+        products.find(
+          (product) => product.id === current.id
+        ) ?? null
+      );
+    });
+  }, [products]);
 
   const navigateTo = (targetView: string) => {
     setView(targetView);
@@ -204,25 +184,34 @@ export default function StorefrontClient({
     setSupportModalTab(null);
     setShowSearch(false);
 
+    if (typeof window !== 'undefined') {
+      window.scrollTo({
+        top: 0,
+        behavior: 'smooth',
+      });
+    }
+  };
+
+  const handleSearchSubmit = () => {
+    setView('Shop All');
+    setShowSearch(false);
+    setIsMobileMenuOpen(false);
+
     window.scrollTo({
       top: 0,
       behavior: 'smooth',
     });
   };
 
-  // PRODUCT MARKETPLACE ACTION
-
   const handleWhereToBuy = (product: Product) => {
     setWhereToBuyProduct(product);
   };
 
+  const isCustomerCare = view === 'Customer Care';
+
   return (
     <div className="min-h-screen">
-      {/* ANNOUNCEMENT */}
-
       <AnnouncementBar settings={settings} />
-
-      {/* RESPONSIVE HEADER */}
 
       <Header
         activeView={view}
@@ -236,15 +225,11 @@ export default function StorefrontClient({
           setSearch(query);
           setView('Shop All');
         }}
-        onSearchSubmit={() =>
-          navigateTo('Shop All')
-        }
+        onSearchSubmit={handleSearchSubmit}
         onOpenMobileMenu={() =>
           setIsMobileMenuOpen(true)
         }
       />
-
-      {/* MAIN PAGE SWITCHING */}
 
       {view === 'Home' ? (
         <HomeView
@@ -259,7 +244,7 @@ export default function StorefrontClient({
         />
       ) : view === 'About Us' ? (
         <AboutView onNavigate={navigateTo} />
-      ) : view === 'Customer Care' ? (
+      ) : isCustomerCare ? (
         <CustomerCareView
           settings={settings}
           faqs={faqs}
@@ -276,6 +261,8 @@ export default function StorefrontClient({
           onSelectCategory={(category) => {
             setView(category);
             setSearch('');
+            setShowSearch(false);
+
             window.scrollTo({
               top: 0,
               behavior: 'smooth',
@@ -292,20 +279,19 @@ export default function StorefrontClient({
         />
       )}
 
-      {/* FOOTER WITHOUT EXPLORE COLUMN */}
+      {/* Footer appears on all storefront views
+          EXCEPT Customer Care. */}
 
-      <Footer
-        onOpenSupport={(tab) =>
-          setSupportModalTab(tab)
-        }
-        settings={settings}
-      />
+      {!isCustomerCare && (
+        <Footer
+          onOpenSupport={(tab) =>
+            setSupportModalTab(tab)
+          }
+          settings={settings}
+        />
+      )}
 
-      {/* NOTIFICATIONS */}
-
-      <ToastNotice notice={notice} />
-
-      {/* MOBILE / TABLET DRAWER */}
+      <ToastNotice notice="" />
 
       <SideDrawer
         isOpen={isMobileMenuOpen}
@@ -316,8 +302,6 @@ export default function StorefrontClient({
         onNavigate={navigateTo}
       />
 
-      {/* PRODUCT DETAILS MODAL */}
-
       <ProductDetailModal
         product={selectedProduct}
         onClose={() =>
@@ -326,8 +310,6 @@ export default function StorefrontClient({
         onWhereToBuy={handleWhereToBuy}
       />
 
-      {/* MARKETPLACE MODAL */}
-
       <WhereToBuyModal
         product={whereToBuyProduct}
         onClose={() =>
@@ -335,7 +317,8 @@ export default function StorefrontClient({
         }
       />
 
-      {/* EXISTING FOOTER SUPPORT MODAL */}
+      {/* Existing footer support functionality
+          remains available on other pages. */}
 
       <SupportModal
         activeTab={supportModalTab}
