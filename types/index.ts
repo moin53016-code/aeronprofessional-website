@@ -1,82 +1,197 @@
+
 /**
  * Type definitions for AERON PROFESSIONAL Storefront
+ *
  * Ratings and reviews are intentionally NOT included.
  */
 
-export type ProductStatus = 'DRAFT' | 'ACTIVE' | 'SOLD_OUT' | 'ARCHIVED';
+// PRODUCT STATUS
 
-export type SortOption = 'featured' | 'low' | 'high' | 'newest';
+export type ProductStatus =
+  | 'DRAFT'
+  | 'ACTIVE'
+  | 'SOLD_OUT'
+  | 'ARCHIVED';
+
+// PRODUCT SORTING
+
+export type SortOption =
+  | 'featured'
+  | 'low'
+  | 'high'
+  | 'newest';
+
+// MARKETPLACE LINKS
 
 export interface MarketplaceLink {
   marketplaceId: string;
   marketplaceName: string;
   marketplaceSlug: string;
+
   url: string;
+
   tagline?: string;
   badgeText?: string;
   badgeColor?: string;
   buttonText?: string;
+
   displayOrder: number;
 }
 
-/** Public product DTO — safe to pass to client components */
+// PUBLIC PRODUCT DATA
+
 export interface Product {
   id: string;
+
   name: string;
+
   slug: string;
-  category: string;        // primary category name (for display)
-  categoryId?: string;     // primary category id
-  price: number;           // display price in INR (not paise)
-  originalPrice?: number;  // MRP in INR
+
+  // PRIMARY CATEGORY
+
+  category: string;
+
+  categoryId?: string;
+
+  // ALL ASSIGNED CATEGORIES
+
+  categoryIds?: string[];
+
+  categoryNames?: string[];
+
+  // PRODUCT PRICING
+
+  price: number;
+
+  originalPrice?: number;
+
+  // PRODUCT STATUS
+
   status: ProductStatus;
+
   isFeatured: boolean;
+
   isNew: boolean;
+
   displayOrder: number;
+
   badge?: string;
-  image: string;           // primary image URL
-  images: string[];        // all image URLs
+
+  // PRODUCT IMAGES
+
+  image: string;
+
+  images: string[];
+
+  // PRODUCT DESCRIPTION
+
   description: string;
+
   shortDescription?: string;
-  specs: string[];         // display-ready spec strings
+
+  specs: string[];
+
+  // CENTRAL MARKETPLACE LINKS
+
   marketplaceLinks: MarketplaceLink[];
-  publishedAt?: string;    // ISO string
+
+  // PRODUCT PUBLISHING DATE
+
+  publishedAt?: string;
 }
+
+// PRODUCT CATEGORY
 
 export interface Category {
   id: string;
+
   name: string;
+
   slug: string;
+
   label: string;
-  img: string;             // imageUrl
+
+  img: string;
+
   description?: string;
+
   displayOrder: number;
 }
 
+// HOMEPAGE PROMOTIONAL SLIDES
+
 export interface PromoSlide {
   id: string;
+
   eyebrow: string;
+
   title: string;
-  copy: string;            // description field mapped to copy for compatibility
-  img: string;             // imageUrl
+
+  copy: string;
+
+  img: string;
+
   buttonLabel?: string;
+
   buttonTarget?: string;
 }
 
+// GLOBAL WEBSITE SETTINGS
+
 export interface SiteSettings {
+  // BRAND INFORMATION
+
   brandName: string;
-  instagramUrl: string;
-  instagramHandle: string;
-  whatsappNumber: string;
-  whatsappMessage: string;
-  contactEmail: string;
-  supportEmail: string;
-  businessPhone: string;
-  copyrightText: string;
-  announcementBarText: string;
-  announcementBarVisible: boolean;
-  seoTitle: string;
-  seoDescription: string;
-  priceDisclaimer: string;
+
   logoUrl?: string | null;
+
+  // INSTAGRAM
+
+  instagramUrl: string;
+
+  instagramHandle: string;
+
+  // WHATSAPP SUPPORT
+
+  whatsappNumber: string;
+
+  whatsappMessage: string;
+
+  whatsappUrl?: string;
+
+  // EMAIL SUPPORT
+
+  contactEmail: string;
+
+  supportEmail: string;
+
+  // WARRANTY SUPPORT
+
+  warrantySupportUrl?: string;
+
+  // BUSINESS CONTACT
+
+  businessPhone: string;
+
+  // FOOTER SETTINGS
+
+  copyrightText: string;
+
   footerText?: string;
+
+  // ANNOUNCEMENT BAR
+
+  announcementBarText: string;
+
+  announcementBarVisible: boolean;
+
+  // SEO SETTINGS
+
+  seoTitle: string;
+
+  seoDescription: string;
+
+  // PRODUCT DISCLAIMER
+
+  priceDisclaimer: string;
 }

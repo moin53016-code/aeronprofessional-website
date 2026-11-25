@@ -11,40 +11,178 @@ import type {
   SortOption,
 } from '@/types';
 
+// GLOBAL PRODUCT COLLECTION VIEWS
+
+const GLOBAL_VIEWS = new Set([
+  'home',
+  'shop all',
+  'professional collection',
+]);
+
+// NORMALIZE SEARCH AND CATEGORY TEXT
+
+function normalizeText(
+  value: string
+): string {
+  return value.trim().toLowerCase();
+}
+
+// CHECK PRODUCT CATEGORY MEMBERSHIP
+
+function matchesProductCategory(
+  product: Product,
+  view: string
+): boolean {
+  const normalizedView =
+    normalizeText(view);
+
+  // SHOW ALL PRODUCTS IN GLOBAL VIEWS
+
+  if (GLOBAL_VIEWS.has(normalizedView)) {
+    return true;
+  }
+
+  // CHECK ALL ASSIGNED CATEGORY IDS
+
+  if (
+    product.categoryIds?.includes(view)
+  ) {
+    return true;
+  }
+
+  // CHECK ALL ASSIGNED CATEGORY NAMES
+
+  if (
+    Array.isArray(product.categoryNames)
+  ) {
+    return product.categoryNames.some(
+      (name) =>
+        normalizeText(name) ===
+        normalizedView
+    );
+  }
+
+  // PRIMARY CATEGORY FALLBACK
+
+  return (
+    product.categoryId === view ||
+    normalizeText(product.category) ===
+      normalizedView
+  );
+}
+
+// GET PRODUCT PUBLISHING TIMESTAMP
+
+function getPublishedTimestamp(
+  product: Product
+): number {
+  if (!product.publishedAt) return 0;
+
+  return (
+    Date.parse(product.publishedAt) || 0
+  );
+}
+
+// STABLE PRODUCT SORTING
+
+function compareDisplayOrder(
+  a: Product,
+  b: Product
+): number {
+  return (
+    a.displayOrder - b.displayOrder ||
+    a.name.localeCompare(b.name) ||
+    a.id.localeCompare(b.id)
+  );
+}
+
+// MAIN PRODUCT FILTER HOOK
+
 export function useProductFilters(
   products: Product[],
   initialView: string = 'Home'
 ) {
-  const [view, setView] = useState(initialView);
-  const [search, setSearch] = useState('');
-  const [showSearch, setShowSearch] = useState(false);
+  // VIEW STATE
+
+  const [view, setView] =
+    useState(initialView);
+
+  // SEARCH STATE
+
+  const [search, setSearch] =
+    useState('');
+
+  const [showSearch, setShowSearch] =
+    useState(false);
+
+  // SORTING STATE
 
   const [sort, setSort] =
     useState<SortOption>('featured');
 
+  // PRICE FILTER STATE
+
   const [priceLimit, setPriceLimit] =
     useState<number | null>(null);
 
-  const catalogMaxPrice = useMemo(() => {
-    const highest = products.reduce(
-      (maximum, product) =>
-        Math.max(
-          maximum,
-          product.price,
-          product.originalPrice ?? 0
-        ),
-      10000
-    );
+  // PUBLIC PRODUCTS ONLY
 
-    return Math.ceil(highest / 100) * 100;
-  }, [products]);
+  const publicProducts = useMemo(
+    () =>
+      products.filter(
+        (product) =>
+          product.status === 'ACTIVE' ||
+          product.status === 'SOLD_OUT'
+      ),
+    [products]
+  );
+
+  // CALCULATE DYNAMIC MAXIMUM PRICE
+
+  const catalogMaxPrice = useMemo(() => {
+    const highestPrice =
+      publicProducts.reduce(
+        (maximum, product) => {
+          const sellingPrice =
+            Number.isFinite(product.price)
+              ? product.price
+              : 0;
+
+          const originalPrice =
+            typeof product.originalPrice === 'number' &&
+            Number.isFinite(product.originalPrice)
+              ? product.originalPrice
+              : 0;
+
+          return Math.max(
+            maximum,
+            sellingPrice,
+            originalPrice
+          );
+        },
+        10000
+      );
+
+    return (
+      Math.ceil(highestPrice / 100) * 100
+    );
+  }, [publicProducts]);
+
+  // CURRENT PRICE LIMIT
 
   const maxPrice =
     priceLimit === null
       ? catalogMaxPrice
-      : Math.min(priceLimit, catalogMaxPrice);
+      : Math.min(
+          priceLimit,
+          catalogMaxPrice
+        );
 
-  const setMaxPrice = (value: number) => {
+  // UPDATE MAXIMUM PRICE
+
+  const setMaxPrice = (
+    value: number
+  ) => {
     if (!Number.isFinite(value)) return;
 
     setPriceLimit(
@@ -54,94 +192,153 @@ export function useProductFilters(
     );
   };
 
-  const filteredProducts = useMemo(() => {
-    const query = search.trim().toLowerCase();
+  // FILTER AND SORT PRODUCTS
 
-    return products
+  const filteredProducts = useMemo(() => {
+    const query = normalizeText(search);
+
+    // SUPPORT MULTIPLE SEARCH WORDS
+
+    const searchTerms = query
+      .split(/\s+/)
+      .filter(Boolean);
+
+    return publicProducts
       .filter((product) => {
-        if (
-          product.status !== 'ACTIVE' &&
-          product.status !== 'SOLD_OUT'
-        ) {
-          return false;
-        }
+
+        // MULTIPLE CATEGORY FILTERING
 
         const matchesCategory =
-          view === 'Home' ||
-          view === 'Shop All' ||
-          view === 'Professional Collection' ||
-          product.category === view;
+          matchesProductCategory(
+            product,
+            view
+          );
+
+        // PRICE FILTERING
 
         const matchesPrice =
+          Number.isFinite(product.price) &&
+          product.price >= 0 &&
           product.price <= maxPrice;
+
+        // SEARCH ALL PRODUCT INFORMATION
 
         const searchableText = [
           product.name,
+          product.slug,
           product.category,
+
+          ...(product.categoryNames ?? []),
+
           product.description,
           product.shortDescription ?? '',
+          product.badge ?? '',
+
           ...product.specs,
-        ].join(' ').toLowerCase();
+        ]
+          .join(' ')
+          .toLowerCase();
+
+        // ALL SEARCH WORDS MUST MATCH
+
+        const matchesSearch =
+          searchTerms.every(
+            (term) =>
+              searchableText.includes(term)
+          );
 
         return (
           matchesCategory &&
           matchesPrice &&
-          searchableText.includes(query)
+          matchesSearch
         );
       })
+
+      // PRODUCT SORTING
+
       .sort((a, b) => {
         switch (sort) {
+
+          // PRICE: LOW TO HIGH
+
           case 'low':
-            return a.price - b.price;
+            return (
+              a.price - b.price ||
+              compareDisplayOrder(a, b)
+            );
+
+          // PRICE: HIGH TO LOW
 
           case 'high':
-            return b.price - a.price;
+            return (
+              b.price - a.price ||
+              compareDisplayOrder(a, b)
+            );
+
+          // NEWEST PRODUCTS FIRST
 
           case 'newest':
             return (
-              (b.publishedAt
-                ? Date.parse(b.publishedAt) || 0
-                : 0) -
-              (a.publishedAt
-                ? Date.parse(a.publishedAt) || 0
-                : 0)
+              getPublishedTimestamp(b) -
+              getPublishedTimestamp(a) ||
+              compareDisplayOrder(a, b)
             );
+
+          // FEATURED SORTING
 
           default:
             return (
               Number(b.isFeatured) -
                 Number(a.isFeatured) ||
-              a.displayOrder - b.displayOrder
+              compareDisplayOrder(a, b)
             );
         }
       });
   }, [
-    products,
+    publicProducts,
     view,
     search,
     maxPrice,
     sort,
   ]);
 
+  // RESET ALL PRODUCT FILTERS
+
   const clearFilters = () => {
     setPriceLimit(null);
+
     setSearch('');
+
     setSort('featured');
   };
 
+  // RETURN EXISTING HOOK INTERFACE
+
   return {
     view,
+
     search,
+
     showSearch,
+
     sort,
+
     maxPrice,
+
     catalogMaxPrice,
+
     filteredProducts,
+
     setView,
+
     setSearch,
+
     setShowSearch,
+
     setSort,
+
     setMaxPrice,
+
     clearFilters,
   };
 }

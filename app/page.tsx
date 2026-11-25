@@ -26,8 +26,7 @@ interface PublicData {
   }>;
 }
 
-// DEFAULT BRAND SETTINGS
-// USED ONLY WHEN SETTINGS ARE MISSING
+// DEFAULT WEBSITE SETTINGS
 
 const defaultSettings: SiteSettings = {
   brandName: 'AERON PROFESSIONAL',
@@ -38,16 +37,28 @@ const defaultSettings: SiteSettings = {
   instagramHandle:
     '@aeronproffessional',
 
+  // WHATSAPP SUPPORT
+
   whatsappNumber: '919819628073',
 
   whatsappMessage:
     'Hi AERON Professional, I have an inquiry.',
+
+  whatsappUrl: '',
+
+  // EMAIL SUPPORT
 
   contactEmail:
     'tkgroupsofindia@yahoo.co.in',
 
   supportEmail:
     'tkgroupsofindia@yahoo.co.in',
+
+  // WARRANTY SUPPORT
+
+  warrantySupportUrl: '',
+
+  // BUSINESS CONTACT
 
   businessPhone: '+91 98196 28073',
 
@@ -73,10 +84,10 @@ const defaultSettings: SiteSettings = {
   footerText: '',
 };
 
-// VALIDATE PUBLIC MARKETPLACE URLS
+// VALIDATE HTTPS URLS
 
-function isValidMarketplaceUrl(
-  value: string | null
+function isValidHttpsUrl(
+  value: string | null | undefined
 ): value is string {
   if (!value) return false;
 
@@ -94,7 +105,19 @@ function isValidMarketplaceUrl(
   }
 }
 
-// LOAD LIVE WEBSITE DATA
+// NORMALIZE OPTIONAL SUPPORT URLS
+
+function getSafeSupportUrl(
+  value: string | undefined
+): string {
+  const cleaned = value?.trim() ?? '';
+
+  return isValidHttpsUrl(cleaned)
+    ? cleaned
+    : '';
+}
+
+// LOAD LIVE DATABASE DATA
 
 async function getPublicData(): Promise<PublicData> {
   const { prisma } = await import('@/lib/db');
@@ -248,7 +271,7 @@ async function getPublicData(): Promise<PublicData> {
       ],
     }),
 
-    // CENTRAL MARKETPLACE LINKS
+    // ACTIVE MARKETPLACE LINKS
 
     prisma.marketplace.findMany({
       where: {
@@ -270,12 +293,18 @@ async function getPublicData(): Promise<PublicData> {
     }),
   ]);
 
-  // MAP GLOBAL MARKETPLACE LINKS
+  // PUBLIC CATEGORY LOOKUP
+
+  const visibleCategoryIds = new Set(
+    dbCategories.map((category) => category.id)
+  );
+
+  // GLOBAL MARKETPLACE LINKS
 
   const globalMarketplaceLinks: MarketplaceLink[] =
     dbMarketplaces
       .filter((marketplace) =>
-        isValidMarketplaceUrl(marketplace.url)
+        isValidHttpsUrl(marketplace.url)
       )
       .map((marketplace, index) => ({
         marketplaceId: marketplace.id,
@@ -305,8 +334,47 @@ async function getPublicData(): Promise<PublicData> {
 
   const products: Product[] = dbProducts.map(
     (product) => {
+
+      // GET ALL VISIBLE ASSIGNED CATEGORIES
+
+      const assignedCategories =
+        product.categories
+          .map((item) => item.category)
+          .filter((category) =>
+            visibleCategoryIds.has(category.id)
+          )
+          .sort(
+            (a, b) =>
+              a.displayOrder - b.displayOrder ||
+              a.id.localeCompare(b.id)
+          );
+
+      // REMOVE DUPLICATE CATEGORY IDS
+
+      const categoryIds = Array.from(
+        new Set(
+          assignedCategories.map(
+            (category) => category.id
+          )
+        )
+      );
+
+      // GET ALL CATEGORY NAMES
+
+      const categoryNames = Array.from(
+        new Set(
+          assignedCategories.map(
+            (category) => category.name
+          )
+        )
+      );
+
+      // PRIMARY CATEGORY
+
       const primaryCategory =
-        product.categories[0]?.category;
+        assignedCategories[0];
+
+      // PRIMARY PRODUCT IMAGE
 
       const primaryImage =
         product.images.find(
@@ -320,13 +388,21 @@ async function getPublicData(): Promise<PublicData> {
 
         slug: product.slug,
 
+        // PRIMARY CATEGORY
+
         category:
           primaryCategory?.name ?? '',
 
         categoryId:
           primaryCategory?.id,
 
-        // ACCURATE PAISE TO INR CONVERSION
+        // MULTIPLE CATEGORY SUPPORT
+
+        categoryIds,
+
+        categoryNames,
+
+        // ACCURATE PRODUCT PRICING
 
         price:
           product.priceInPaise / 100,
@@ -336,7 +412,8 @@ async function getPublicData(): Promise<PublicData> {
             ? product.originalPriceInPaise / 100
             : undefined,
 
-        status: product.status as Product['status'],
+        status:
+          product.status as Product['status'],
 
         isFeatured: product.isFeatured,
 
@@ -347,6 +424,8 @@ async function getPublicData(): Promise<PublicData> {
         badge:
           product.badgeText ?? undefined,
 
+        // PRODUCT IMAGES
+
         image:
           primaryImage?.url ??
           product.primaryImageUrl ??
@@ -356,10 +435,14 @@ async function getPublicData(): Promise<PublicData> {
           (image) => image.url
         ),
 
+        // PRODUCT DESCRIPTION
+
         description: product.description,
 
         shortDescription:
           product.shortDescription ?? undefined,
+
+        // PRODUCT SPECIFICATIONS
 
         specs: product.specifications.map(
           (specification) =>
@@ -368,7 +451,7 @@ async function getPublicData(): Promise<PublicData> {
               : specification.label
         ),
 
-        // ALL PRODUCTS USE CENTRAL MARKETPLACES
+        // CENTRAL MARKETPLACES
 
         marketplaceLinks:
           globalMarketplaceLinks.map(
@@ -403,7 +486,7 @@ async function getPublicData(): Promise<PublicData> {
       displayOrder: category.displayOrder,
     }));
 
-  // MAP LIVE HOMEPAGE BANNERS
+  // MAP HOMEPAGE BANNERS
 
   const promoSlides: PromoSlide[] =
     dbBanners.map((banner) => ({
@@ -424,7 +507,7 @@ async function getPublicData(): Promise<PublicData> {
         banner.buttonTarget ?? undefined,
     }));
 
-  // MAP WEBSITE SETTINGS
+  // CONVERT DATABASE SETTINGS
 
   const settingsMap: Record<string, string> =
     Object.fromEntries(
@@ -434,12 +517,20 @@ async function getPublicData(): Promise<PublicData> {
       ])
     );
 
-  // PRESERVE INTENTIONALLY EMPTY ADMIN SETTINGS
+  // MAP DYNAMIC WEBSITE SETTINGS
 
   const settings: SiteSettings = {
+
+    // BRAND INFORMATION
+
     brandName:
       settingsMap.brandName ??
       defaultSettings.brandName,
+
+    logoUrl:
+      settingsMap.logoUrl || null,
+
+    // INSTAGRAM
 
     instagramUrl:
       settingsMap.instagramUrl ??
@@ -449,6 +540,8 @@ async function getPublicData(): Promise<PublicData> {
       settingsMap.instagramHandle ??
       defaultSettings.instagramHandle,
 
+    // WHATSAPP SUPPORT
+
     whatsappNumber:
       settingsMap.whatsappNumber ??
       defaultSettings.whatsappNumber,
@@ -456,6 +549,13 @@ async function getPublicData(): Promise<PublicData> {
     whatsappMessage:
       settingsMap.whatsappMessage ??
       defaultSettings.whatsappMessage,
+
+    whatsappUrl:
+      getSafeSupportUrl(
+        settingsMap.whatsappUrl
+      ),
+
+    // EMAIL SUPPORT
 
     contactEmail:
       settingsMap.contactEmail ??
@@ -465,13 +565,29 @@ async function getPublicData(): Promise<PublicData> {
       settingsMap.supportEmail ??
       defaultSettings.supportEmail,
 
+    // WARRANTY SUPPORT URL
+
+    warrantySupportUrl:
+      getSafeSupportUrl(
+        settingsMap.warrantySupportUrl
+      ),
+
+    // BUSINESS CONTACT
+
     businessPhone:
       settingsMap.businessPhone ??
       defaultSettings.businessPhone,
 
+    // FOOTER SETTINGS
+
     copyrightText:
       settingsMap.copyrightText ??
       defaultSettings.copyrightText,
+
+    footerText:
+      settingsMap.footerText ?? '',
+
+    // ANNOUNCEMENT BAR
 
     announcementBarText:
       settingsMap.announcementBarText ??
@@ -482,6 +598,8 @@ async function getPublicData(): Promise<PublicData> {
         ? defaultSettings.announcementBarVisible
         : settingsMap.announcementBarVisible === 'true',
 
+    // SEO SETTINGS
+
     seoTitle:
       settingsMap.seoTitle ??
       defaultSettings.seoTitle,
@@ -490,15 +608,11 @@ async function getPublicData(): Promise<PublicData> {
       settingsMap.seoDescription ??
       defaultSettings.seoDescription,
 
+    // PRICE DISCLAIMER
+
     priceDisclaimer:
       settingsMap.priceDisclaimer ??
       defaultSettings.priceDisclaimer,
-
-    logoUrl:
-      settingsMap.logoUrl || null,
-
-    footerText:
-      settingsMap.footerText ?? '',
   };
 
   // MAP CUSTOMER CARE FAQS
@@ -562,12 +676,14 @@ function WebsiteUnavailable() {
           method="GET"
           className="mt-8"
         >
+
           <button
             type="submit"
             className="inline-flex min-h-12 items-center justify-center bg-black px-10 py-4 text-xs font-semibold tracking-[0.18em] text-white transition-colors hover:bg-gray-800"
           >
             TRY AGAIN
           </button>
+
         </form>
 
         {/* FOOTER */}
@@ -590,20 +706,13 @@ export default async function Home() {
   try {
     data = await getPublicData();
   } catch (error) {
-    // LOG ERROR ON SERVER
-    // NEVER DISPLAY SENSITIVE DATABASE INFORMATION
-
     console.error(
       'Unable to load AERON storefront:',
       error
     );
 
-    // NEVER LOAD STATIC OR DUMMY PRODUCTS
-
     return <WebsiteUnavailable />;
   }
-
-  // RENDER EXISTING STOREFRONT DESIGN
 
   return (
     <StorefrontClient

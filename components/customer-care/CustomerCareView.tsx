@@ -24,13 +24,20 @@ import type { SiteSettings } from '@/types';
 
 interface CustomerCareViewProps {
   settings: SiteSettings;
+
   faqs?: Array<{
     question: string;
     answer: string;
   }>;
 }
 
-type Section = 'contact' | 'faqs' | 'warranty' | 'bulk';
+type Section =
+  | 'contact'
+  | 'faqs'
+  | 'warranty'
+  | 'bulk';
+
+// CUSTOMER CARE NAVIGATION
 
 const sections = [
   {
@@ -63,6 +70,8 @@ const sections = [
   },
 ] as const;
 
+// DEFAULT FAQS
+
 const fallbackFaqs = [
   {
     question: 'Where can I buy AERON products?',
@@ -86,78 +95,255 @@ const fallbackFaqs = [
   },
 ];
 
+// COMMON DESIGN STYLES
+
 const eyebrow =
   'text-[10px] font-bold uppercase tracking-[0.22em] text-[#a27c4c]';
 
 const darkButton =
   'inline-flex min-h-12 items-center justify-center gap-3 rounded-sm bg-[#191919] px-6 py-3 text-xs font-semibold tracking-wide text-white transition-colors hover:bg-[#987345]';
 
+const contactCard =
+  'group flex min-h-[210px] flex-col justify-between border border-[#e5dfd6] bg-[#faf9f6] p-5 transition-colors hover:border-[#b69870] sm:p-6';
+
+// VALIDATE HTTPS SUPPORT LINKS
+
+function getSafeUrl(
+  value?: string | null
+): string {
+  if (!value?.trim()) return '';
+
+  try {
+    const url = new URL(value.trim());
+
+    if (
+      url.protocol !== 'https:' ||
+      !url.hostname ||
+      url.username ||
+      url.password
+    ) {
+      return '';
+    }
+
+    return url.toString();
+
+  } catch {
+    return '';
+  }
+}
+
+// VALIDATE CUSTOM WHATSAPP LINK
+
+function getSafeWhatsAppUrl(
+  value?: string
+): string {
+  const safeUrl = getSafeUrl(value);
+
+  if (!safeUrl) return '';
+
+  const allowedHosts = [
+    'wa.me',
+    'api.whatsapp.com',
+    'web.whatsapp.com',
+    'whatsapp.com',
+    'www.whatsapp.com',
+  ];
+
+  const url = new URL(safeUrl);
+
+  return allowedHosts.includes(
+    url.hostname.toLowerCase()
+  )
+    ? safeUrl
+    : '';
+}
+
+// GENERATE DIRECT WHATSAPP CHAT URL
+
+function createWhatsAppLink(
+  number: string,
+  message: string
+): string {
+  if (!/^[1-9]\d{7,14}$/.test(number)) {
+    return '';
+  }
+
+  const baseUrl = `https://wa.me/${number}`;
+
+  if (!message.trim()) {
+    return baseUrl;
+  }
+
+  return `${baseUrl}?text=${encodeURIComponent(
+    message
+  )}`;
+}
+
+// GENERATE DIRECT EMAIL COMPOSE URL
+// NO PREFILLED SUBJECT OR MESSAGE
+
+function createEmailLink(
+  email: string
+): string {
+  const address = email.trim();
+
+  if (
+    !address ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)
+  ) {
+    return '';
+  }
+
+  return `mailto:${encodeURIComponent(
+    address
+  ).replace(/%40/g, '@')}`;
+}
+
+// MAIN CUSTOMER CARE COMPONENT
+
 export const CustomerCareView: React.FC<
   CustomerCareViewProps
 > = ({ settings, faqs }) => {
+
   const [active, setActive] =
     useState<Section>('contact');
 
-  const [faqSearch, setFaqSearch] = useState('');
+  const [faqSearch, setFaqSearch] =
+    useState('');
+
   const [openFaq, setOpenFaq] =
     useState<number | null>(0);
 
-  const [copied, setCopied] = useState(false);
+  const [copiedEmail, setCopiedEmail] =
+    useState('');
+
+  // DYNAMIC WHATSAPP NUMBER
 
   const whatsappNumber = (
     settings.whatsappNumber || ''
-  ).replace(/\D/g, '');
+  ).replace(/[\s()+-]/g, '');
 
-  const supportEmail =
-    settings.supportEmail || settings.contactEmail || '';
+  // DYNAMIC WHATSAPP DEFAULT MESSAGE
 
-  const whatsappLink = (message: string) =>
-    `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(
-      message
-    )}`;
+  const whatsappMessage =
+    settings.whatsappMessage ?? '';
+
+  // CUSTOM WHATSAPP URL FROM ADMIN PANEL
+
+  const customWhatsAppUrl =
+    getSafeWhatsAppUrl(
+      settings.whatsappUrl
+    );
+
+  // USE CUSTOM URL FIRST
+  // OTHERWISE GENERATE LINK USING NUMBER AND MESSAGE
+
+  const whatsappHref =
+    customWhatsAppUrl ||
+    createWhatsAppLink(
+      whatsappNumber,
+      whatsappMessage
+    );
+
+  // DYNAMIC SUPPORT EMAIL
+
+  const supportEmail = (
+    settings.supportEmail ?? ''
+  ).trim();
+
+  const emailHref =
+    createEmailLink(supportEmail);
+
+  // DYNAMIC WARRANTY SUPPORT URL
+
+  const customWarrantyUrl =
+    getSafeUrl(
+      settings.warrantySupportUrl
+    );
+
+  // CUSTOM WARRANTY URL HAS FIRST PRIORITY
+
+  const warrantyHref =
+    customWarrantyUrl ||
+    customWhatsAppUrl ||
+    createWhatsAppLink(
+      whatsappNumber,
+      'Hi AERON Professional, I need warranty assistance.'
+    );
+
+  // SALON AND BULK ENQUIRY LINK
+
+  const bulkHref =
+    customWhatsAppUrl ||
+    createWhatsAppLink(
+      whatsappNumber,
+      'Hi AERON Professional, I would like to enquire about salon and bulk purchases.'
+    );
+
+  // FAQ DATA
 
   const faqItems =
     faqs && faqs.length > 0
       ? faqs
       : fallbackFaqs;
 
-  const filteredFaqs = faqItems.filter((item) =>
-    `${item.question} ${item.answer}`
-      .toLowerCase()
-      .includes(faqSearch.trim().toLowerCase())
+  const filteredFaqs = faqItems.filter(
+    (item) =>
+      `${item.question} ${item.answer}`
+        .toLowerCase()
+        .includes(
+          faqSearch.trim().toLowerCase()
+        )
   );
 
-  const changeSection = (section: Section) => {
+  // SWITCH CUSTOMER CARE SECTION
+
+  const changeSection = (
+    section: Section
+  ) => {
     setActive(section);
     setOpenFaq(0);
   };
 
+  // COPY SUPPORT EMAIL
+
   const copyEmail = async () => {
-    if (!supportEmail) return;
+    if (!supportEmail || !emailHref) return;
 
     try {
-      await navigator.clipboard.writeText(supportEmail);
-      setCopied(true);
+      await navigator.clipboard.writeText(
+        supportEmail
+      );
+
+      setCopiedEmail(supportEmail);
+
     } catch {
-      setCopied(false);
+      setCopiedEmail('');
     }
   };
 
   return (
     <main className="min-h-[calc(100dvh-150px)] bg-[#faf9f6] text-[#1d1b18]">
-      {/* REFINED HERO */}
+
+      {/* CUSTOMER CARE HERO */}
 
       <section className="relative overflow-hidden border-b border-[#e6e0d8] bg-[#f1eee9]">
+
         <div className="pointer-events-none absolute -right-20 -top-44 h-[340px] w-[340px] rounded-full border border-[#c7ab85]/20 sm:h-[480px] sm:w-[480px]" />
 
         <div className="relative mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-12 sm:px-6 sm:py-16 lg:flex-row lg:items-end lg:justify-between lg:px-8">
+
           <div className="max-w-2xl">
+
             <p className={eyebrow}>
               AERON PROFESSIONAL / HELP CENTER
             </p>
 
             <h1 className="serif mt-4 text-[clamp(2.8rem,5vw,4.5rem)] leading-[1.08] tracking-tight">
-              Here to help<span className="text-[#b69870]">.</span>
+              Here to help
+              <span className="text-[#b69870]">
+                .
+              </span>
             </h1>
 
             <p className="mt-5 max-w-xl text-sm leading-7 text-[#67615a] sm:text-base">
@@ -165,47 +351,65 @@ export const CustomerCareView: React.FC<
               or professional enquiries. Everything
               you need, in one place.
             </p>
+
           </div>
 
           <div className="flex shrink-0 items-center gap-3 border-t border-[#ded5c9] pt-5 lg:border-t-0 lg:pt-0">
+
             <span className="flex h-11 w-11 items-center justify-center rounded-full border border-[#bd9c70]/50 bg-white text-[#9d794c]">
               <Headphones size={21} />
             </span>
 
             <div>
+
               <p className="text-xs font-semibold">
                 AERON Customer Care
               </p>
+
               <p className="mt-1 text-xs text-[#80796e]">
                 Select a service below
               </p>
+
             </div>
+
           </div>
+
         </div>
+
       </section>
 
       {/* SUPPORT WORKSPACE */}
 
       <section className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 sm:py-14 lg:px-8">
+
         <div className="mb-7">
-          <p className={eyebrow}>PERSONAL ASSISTANCE</p>
+
+          <p className={eyebrow}>
+            PERSONAL ASSISTANCE
+          </p>
 
           <h2 className="serif mt-2 text-2xl sm:text-3xl">
             How can we assist you?
           </h2>
+
         </div>
 
         <div className="grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-[275px_minmax(0,1fr)] lg:gap-7">
-          {/* INTERACTIVE MENU */}
+
+          {/* CUSTOMER CARE MENU */}
 
           <div
             role="tablist"
             aria-label="Customer care services"
             className="grid grid-cols-2 gap-2 self-start sm:grid-cols-4 lg:grid-cols-1"
           >
+
             {sections.map((section) => {
+
               const Icon = section.icon;
-              const selected = active === section.id;
+
+              const selected =
+                active === section.id;
 
               return (
                 <button
@@ -224,6 +428,7 @@ export const CustomerCareView: React.FC<
                       : 'border-[#e6e0d8] bg-white hover:border-[#b69870] hover:bg-[#f6f2ec]'
                   }`}
                 >
+
                   <Icon
                     size={20}
                     className={`shrink-0 ${
@@ -234,6 +439,7 @@ export const CustomerCareView: React.FC<
                   />
 
                   <span className="min-w-0 flex-1">
+
                     <span className="block text-xs font-semibold sm:text-sm">
                       {section.title}
                     </span>
@@ -247,6 +453,7 @@ export const CustomerCareView: React.FC<
                     >
                       {section.subtitle}
                     </span>
+
                   </span>
 
                   <ArrowRight
@@ -257,20 +464,27 @@ export const CustomerCareView: React.FC<
                         : 'text-[#bdb6ae]'
                     }`}
                   />
+
                 </button>
               );
             })}
 
             <div className="mt-4 hidden border-t border-[#e4ded5] pt-5 lg:block">
-              <p className={eyebrow}>NEED MORE HELP?</p>
+
+              <p className={eyebrow}>
+                NEED MORE HELP?
+              </p>
+
               <p className="mt-2 text-xs leading-6 text-[#79736c]">
                 Select Contact Us to reach our
                 customer support team directly.
               </p>
+
             </div>
+
           </div>
 
-          {/* CONTENT PANEL */}
+          {/* MAIN CONTENT PANEL */}
 
           <div
             id="aeron-care-content"
@@ -279,44 +493,55 @@ export const CustomerCareView: React.FC<
             key={active}
             className="min-w-0 overflow-hidden rounded-sm border border-[#e6e0d8] bg-white shadow-[0_12px_40px_rgba(43,31,15,0.035)] motion-safe:animate-[fadeIn_250ms_ease-out]"
           >
+
+            {/* CONTACT US SECTION */}
+
             {active === 'contact' && (
+
               <div className="p-5 sm:p-8 lg:p-10">
+
                 <p className={eyebrow}>
                   CONNECT WITH AERON
                 </p>
 
                 <h3 className="serif mt-3 text-3xl sm:text-4xl">
-                  Let's talk.
+                  Let&apos;s talk.
                 </h3>
 
                 <p className="mt-3 max-w-xl text-sm leading-7 text-[#726c64]">
                   Whether you need product guidance
-                  or after-sales assistance, we're
-                  ready to hear from you.
+                  or after-sales assistance,
+                  we&apos;re ready to hear from you.
                 </p>
 
                 <div className="mt-8 grid gap-4 md:grid-cols-2">
-                  {whatsappNumber && (
+
+                  {/* DIRECT WHATSAPP CHAT */}
+
+                  {whatsappHref && (
+
                     <a
-                      href={whatsappLink(
-                        settings.whatsappMessage ||
-                          'Hi AERON Professional, I need assistance.'
-                      )}
+                      href={whatsappHref}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="group flex min-h-[210px] flex-col justify-between border border-[#e5dfd6] bg-[#faf9f6] p-5 transition-colors hover:border-[#b69870] sm:p-6"
+                      className={contactCard}
                     >
+
                       <div className="flex items-start justify-between">
+
                         <span className="flex h-11 w-11 items-center justify-center rounded-full bg-[#eae1d4] text-[#937248]">
                           <MessageCircle size={21} />
                         </span>
+
                         <ArrowUpRight
                           size={19}
                           className="text-[#9b7a51] transition-transform group-hover:-translate-y-1 group-hover:translate-x-1"
                         />
+
                       </div>
 
                       <div className="mt-6">
+
                         <h4 className="text-lg font-semibold">
                           WhatsApp
                         </h4>
@@ -326,65 +551,117 @@ export const CustomerCareView: React.FC<
                           enquiry or product.
                         </p>
 
-                        <p className="mt-4 text-sm font-semibold text-[#987345]">
-                          {settings.businessPhone ||
-                            `+${whatsappNumber}`}
+                        <p className="mt-4 break-words text-sm font-semibold text-[#987345]">
+                          Chat on WhatsApp
                         </p>
+
                       </div>
+
                     </a>
+
                   )}
 
-                  {supportEmail && (
-                    <div className="flex min-h-[210px] flex-col justify-between border border-[#e5dfd6] bg-[#faf9f6] p-5 sm:p-6">
-                      <div className="flex items-start justify-between">
-                        <span className="flex h-11 w-11 items-center justify-center rounded-full bg-[#eae1d4] text-[#937248]">
-                          <Mail size={21} />
-                        </span>
+                  {/* DIRECT EMAIL COMPOSE */}
 
-                        <button
-                          type="button"
-                          onClick={copyEmail}
-                          className="flex min-h-9 items-center gap-1 rounded-sm border border-[#ddd3c6] px-3 text-[11px] font-semibold hover:border-[#9b7a51]"
-                        >
-                          {copied ? (
-                            <>
-                              <Check size={13} />
-                              Copied
-                            </>
-                          ) : (
-                            'Copy email'
-                          )}
-                        </button>
-                      </div>
+                  {emailHref && (
 
-                      <div className="mt-6">
-                        <h4 className="text-lg font-semibold">
-                          Email Support
-                        </h4>
+                    <div className="relative min-w-0">
 
-                        <p className="mt-2 text-xs leading-6 text-[#777067]">
-                          Send us your detailed question
-                          or support request.
-                        </p>
+                      <a
+                        href={emailHref}
+                        aria-label={`Send email to ${supportEmail}`}
+                        className={`${contactCard} h-full`}
+                      >
 
-                        <a
-                          href={`mailto:${supportEmail}?subject=${encodeURIComponent(
-                            'AERON Professional Support'
-                          )}`}
-                          className="mt-4 block break-all text-sm font-semibold text-[#987345] underline-offset-4 hover:underline"
-                        >
-                          {supportEmail}
-                        </a>
-                      </div>
+                        <div className="flex items-start justify-between">
+
+                          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-[#eae1d4] text-[#937248]">
+                            <Mail size={21} />
+                          </span>
+
+                        </div>
+
+                        <div className="mt-6">
+
+                          <h4 className="text-lg font-semibold">
+                            Email Support
+                          </h4>
+
+                          <p className="mt-2 text-xs leading-6 text-[#777067]">
+                            Send us your detailed question
+                            or support request.
+                          </p>
+
+                          <p className="mt-4 break-all text-sm font-semibold text-[#987345] underline-offset-4 group-hover:underline">
+                            {supportEmail}
+                          </p>
+
+                          <span className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-[#987345]">
+
+                            Compose Email
+
+                            <ArrowUpRight size={14} />
+
+                          </span>
+
+                        </div>
+
+                      </a>
+
+                      {/* COPY EMAIL BUTTON */}
+
+                      <button
+                        type="button"
+                        onClick={copyEmail}
+                        className="absolute right-5 top-5 z-10 flex min-h-9 items-center gap-1 rounded-sm border border-[#ddd3c6] bg-[#faf9f6] px-3 text-[11px] font-semibold hover:border-[#9b7a51] sm:right-6 sm:top-6"
+                      >
+
+                        {copiedEmail === supportEmail ? (
+
+                          <>
+                            <Check size={13} />
+                            Copied
+                          </>
+
+                        ) : (
+
+                          'Copy email'
+
+                        )}
+
+                      </button>
+
                     </div>
+
                   )}
+
+                  {/* NO CONTACT SETTINGS AVAILABLE */}
+
+                  {!whatsappHref && !emailHref && (
+
+                    <div className="border border-[#e5dfd6] bg-[#faf9f6] p-6 text-sm leading-7 text-[#726c64] md:col-span-2">
+                      Contact options are temporarily
+                      unavailable. Please check again
+                      later.
+                    </div>
+
+                  )}
+
                 </div>
+
               </div>
+
             )}
 
+            {/* FREQUENTLY ASKED QUESTIONS */}
+
             {active === 'faqs' && (
+
               <div className="p-5 sm:p-8 lg:p-10">
-                <p className={eyebrow}>HELP & ANSWERS</p>
+
+                <p className={eyebrow}>
+                  HELP & ANSWERS
+                </p>
 
                 <h3 className="serif mt-3 text-3xl sm:text-4xl">
                   Frequently asked questions.
@@ -396,6 +673,7 @@ export const CustomerCareView: React.FC<
                 </p>
 
                 <div className="relative mt-7">
+
                   <Search
                     size={19}
                     className="absolute left-4 top-1/2 -translate-y-1/2 text-[#9b7a51]"
@@ -412,17 +690,24 @@ export const CustomerCareView: React.FC<
                     aria-label="Search frequently asked questions"
                     className="min-h-12 w-full border border-[#ddd5ca] bg-[#faf9f6] py-3 pl-12 pr-4 text-sm outline-none focus:border-[#9b7a51]"
                   />
+
                 </div>
 
                 <div className="mt-5 divide-y divide-[#ebe6df] border-y border-[#ebe6df]">
+
                   {filteredFaqs.length > 0 ? (
+
                     filteredFaqs.map((faq, index) => {
-                      const expanded = openFaq === index;
+
+                      const expanded =
+                        openFaq === index;
 
                       return (
+
                         <div
                           key={`${faq.question}-${index}`}
                         >
+
                           <button
                             type="button"
                             aria-expanded={expanded}
@@ -434,37 +719,55 @@ export const CustomerCareView: React.FC<
                             }
                             className="flex min-h-14 w-full items-center justify-between gap-4 py-4 text-left text-sm font-semibold leading-6 hover:text-[#987345]"
                           >
-                            <span>{faq.question}</span>
+
+                            <span>
+                              {faq.question}
+                            </span>
 
                             {expanded ? (
+
                               <ChevronUp
                                 size={18}
                                 className="shrink-0 text-[#987345]"
                               />
+
                             ) : (
+
                               <ChevronDown
                                 size={18}
                                 className="shrink-0 text-[#987345]"
                               />
+
                             )}
+
                           </button>
 
                           {expanded && (
+
                             <div
                               id={`aeron-answer-${index}`}
                               className="pb-5 pr-5 text-sm leading-7 text-[#726c64]"
                             >
+
                               {faq.answer}
+
                             </div>
+
                           )}
+
                         </div>
+
                       );
                     })
+
                   ) : (
+
                     <div className="py-10 text-center">
+
                       <p className="text-sm font-semibold">
                         No matching questions
                       </p>
+
                       <p className="mt-2 text-xs text-[#79736c]">
                         Try a different search term.
                       </p>
@@ -478,14 +781,23 @@ export const CustomerCareView: React.FC<
                       >
                         Clear search
                       </button>
+
                     </div>
+
                   )}
+
                 </div>
+
               </div>
+
             )}
 
+            {/* WARRANTY SUPPORT */}
+
             {active === 'warranty' && (
+
               <div className="p-5 sm:p-8 lg:p-10">
+
                 <p className={eyebrow}>
                   PRODUCT ASSURANCE
                 </p>
@@ -501,6 +813,7 @@ export const CustomerCareView: React.FC<
                 </p>
 
                 <div className="mt-8 space-y-3">
+
                   {[
                     {
                       number: '01',
@@ -521,18 +834,24 @@ export const CustomerCareView: React.FC<
                       text: 'Our support team will explain the available next steps.',
                     },
                   ].map((step) => {
+
                     const Icon = step.icon;
 
                     return (
+
                       <div
                         key={step.number}
                         className="flex items-start gap-4 border border-[#e8e2d9] bg-[#faf9f6] p-4 sm:p-5"
                       >
+
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#eae1d4] text-[#937248]">
+
                           <Icon size={19} />
+
                         </div>
 
                         <div className="min-w-0 flex-1">
+
                           <span className={eyebrow}>
                             STEP {step.number}
                           </span>
@@ -544,10 +863,14 @@ export const CustomerCareView: React.FC<
                           <p className="mt-1 text-xs leading-6 text-[#726c64] sm:text-sm">
                             {step.text}
                           </p>
+
                         </div>
+
                       </div>
+
                     );
                   })}
+
                 </div>
 
                 <p className="mt-5 text-xs leading-6 text-[#898178]">
@@ -555,40 +878,61 @@ export const CustomerCareView: React.FC<
                   the terms applicable to your product.
                 </p>
 
-                {whatsappNumber ? (
+                {/* ADMIN CONFIGURED WARRANTY LINK */}
+
+                {warrantyHref ? (
+
                   <a
-                    href={whatsappLink(
-                      'Hi AERON Professional, I need warranty assistance.'
-                    )}
+                    href={warrantyHref}
                     target="_blank"
                     rel="noopener noreferrer"
                     className={`${darkButton} mt-6`}
                   >
+
                     REQUEST WARRANTY SUPPORT
+
                     <ArrowUpRight size={16} />
+
                   </a>
+
+                ) : emailHref ? (
+
+                  <a
+                    href={emailHref}
+                    className={`${darkButton} mt-6`}
+                  >
+
+                    EMAIL SUPPORT
+
+                    <ArrowRight size={16} />
+
+                  </a>
+
                 ) : (
-                  supportEmail && (
-                    <a
-                      href={`mailto:${supportEmail}?subject=Warranty%20Support`}
-                      className={`${darkButton} mt-6`}
-                    >
-                      EMAIL SUPPORT
-                      <ArrowRight size={16} />
-                    </a>
-                  )
+
+                  <p className="mt-6 text-sm text-[#726c64]">
+                    Warranty support is temporarily
+                    unavailable.
+                  </p>
+
                 )}
+
               </div>
+
             )}
 
+            {/* SALON AND BULK ENQUIRIES */}
+
             {active === 'bulk' && (
+
               <div className="p-5 sm:p-8 lg:p-10">
+
                 <p className={eyebrow}>
                   PROFESSIONAL PARTNERSHIPS
                 </p>
 
                 <h3 className="serif mt-3 text-3xl leading-tight sm:text-4xl">
-                  Let's grow together.
+                  Let&apos;s grow together.
                 </h3>
 
                 <p className="mt-3 max-w-xl text-sm leading-7 text-[#726c64]">
@@ -598,29 +942,38 @@ export const CustomerCareView: React.FC<
                 </p>
 
                 <div className="mt-8 grid gap-3 sm:grid-cols-2">
+
                   {[
                     'Salon equipment enquiries',
                     'Wholesale purchases',
                     'Distributor enquiries',
                     'Beauty academy requirements',
                   ].map((item) => (
+
                     <div
                       key={item}
                       className="flex min-h-16 items-center gap-3 border border-[#e8e2d9] bg-[#faf9f6] p-4"
                     >
+
                       <Check
                         size={17}
                         className="shrink-0 text-[#987345]"
                       />
+
                       <span className="text-sm font-medium">
                         {item}
                       </span>
+
                     </div>
+
                   ))}
+
                 </div>
 
                 <div className="mt-8 flex flex-wrap items-center justify-between gap-5 border-t border-[#ebe6df] pt-6">
+
                   <div>
+
                     <p className="text-sm font-semibold">
                       Ready to enquire?
                     </p>
@@ -628,37 +981,59 @@ export const CustomerCareView: React.FC<
                     <p className="mt-1 text-xs text-[#726c64]">
                       Tell us about your business needs.
                     </p>
+
                   </div>
 
-                  {whatsappNumber ? (
+                  {/* DYNAMIC ENQUIRY LINK */}
+
+                  {bulkHref ? (
+
                     <a
-                      href={whatsappLink(
-                        'Hi AERON Professional, I would like to enquire about salon and bulk purchases.'
-                      )}
+                      href={bulkHref}
                       target="_blank"
                       rel="noopener noreferrer"
                       className={darkButton}
                     >
+
                       START AN ENQUIRY
+
                       <ArrowUpRight size={16} />
+
                     </a>
+
+                  ) : emailHref ? (
+
+                    <a
+                      href={emailHref}
+                      className={darkButton}
+                    >
+
+                      EMAIL OUR TEAM
+
+                      <ArrowRight size={16} />
+
+                    </a>
+
                   ) : (
-                    supportEmail && (
-                      <a
-                        href={`mailto:${supportEmail}?subject=Salon%20and%20Bulk%20Enquiry`}
-                        className={darkButton}
-                      >
-                        EMAIL OUR TEAM
-                        <ArrowRight size={16} />
-                      </a>
-                    )
+
+                    <p className="text-xs text-[#726c64]">
+                      Enquiries are temporarily unavailable.
+                    </p>
+
                   )}
+
                 </div>
+
               </div>
+
             )}
+
           </div>
+
         </div>
+
       </section>
+
     </main>
   );
 };
