@@ -1,0 +1,41 @@
+1. to push code file in new repo 
+
+git init -b main
+
+git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
+
+git add .
+
+git status --short
+
+git commit -m "Initial commit"
+
+git push -u origin main
+
+
+2. to push updated code in the repo
+
+git status
+
+git remote -v
+
+git add .
+
+git diff --cached --stat
+
+git commit -m "Update website files"
+
+git pull --rebase
+
+git push
+
+
+or 
+
+git add .
+
+git status
+
+git commit -m "Merge GitHub main with local website updates"
+
+git push -u origin main

@@ -1,263 +1,509 @@
+
 'use client';
-import { useState } from 'react';
+
+import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { Save, CheckCircle } from 'lucide-react';
+import { Save, CheckCircle, AlertCircle } from 'lucide-react';
 
 interface SettingsFormProps {
   initialSettings: Record<string, string>;
 }
 
-export default function SettingsForm({ initialSettings }: SettingsFormProps) {
+// Matches the website's existing default settings.
+const DEFAULTS: Record<string, string> = {
+  brandName: 'AERON PROFESSIONAL',
+  announcementBarText:
+    'WELCOME TO AERON PROFESSIONAL ✦ ELEVATE YOUR EVERYDAY STYLE',
+  announcementBarVisible: 'true',
+  instagramUrl:
+    'https://instagram.com/aeronproffessional',
+  instagramHandle: '@aeronproffessional',
+  whatsappNumber: '919819628073',
+  whatsappMessage:
+    'Hi AERON Professional, I have an inquiry.',
+  contactEmail: 'tkgroupsofindia@yahoo.co.in',
+  supportEmail: 'tkgroupsofindia@yahoo.co.in',
+  businessPhone: '+91 98196 28073',
+  copyrightText:
+    'AERON PROFESSIONAL. All rights reserved.',
+  priceDisclaimer:
+    'Prices and availability may vary by retailer.',
+  seoTitle:
+    'AERON PROFESSIONAL | Salon-Grade Styling Tools',
+  seoDescription:
+    'Discover premium professional hair dryers, straighteners, curling tools and salon essentials.',
+};
+
+const fieldClass =
+  'w-full min-w-0 rounded-md border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-black';
+
+const labelClass =
+  'mb-1.5 block text-xs font-bold tracking-wider text-gray-600';
+
+const sectionClass =
+  'space-y-4 rounded-lg border border-gray-200 bg-white p-4 sm:p-6';
+
+function TextField({
+  label,
+  value,
+  onChange,
+  type = 'text',
+  placeholder,
+  hint,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: string;
+  placeholder?: string;
+  hint?: string;
+}) {
+  return (
+    <label className="block min-w-0">
+      <span className={labelClass}>{label}</span>
+
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={fieldClass}
+      />
+
+      {hint && (
+        <span className="mt-1 block text-xs text-gray-500">
+          {hint}
+        </span>
+      )}
+    </label>
+  );
+}
+
+export default function SettingsForm({
+  initialSettings,
+}: SettingsFormProps) {
   const router = useRouter();
+
+  const [settings, setSettings] = useState<
+    Record<string, string>
+  >({
+    ...DEFAULTS,
+    ...initialSettings,
+  });
+
+  const [sameEmail, setSameEmail] = useState(
+    !initialSettings.supportEmail ||
+      (initialSettings.supportEmail ??
+        DEFAULTS.supportEmail) ===
+        (initialSettings.contactEmail ??
+          DEFAULTS.contactEmail)
+  );
+
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
 
-  const [settings, setSettings] = useState<Record<string, string>>({
-    brandName: initialSettings.brandName ?? 'AERON PROFESSIONAL',
-    announcementBarText: initialSettings.announcementBarText ?? 'FREE SHIPPING ON ALL ORDERS ACROSS INDIA',
-    announcementBarVisible: initialSettings.announcementBarVisible ?? 'true',
-    instagramUrl: initialSettings.instagramUrl ?? 'https://instagram.com/aeronprofessional',
-    instagramHandle: initialSettings.instagramHandle ?? '@aeronprofessional',
-    whatsappNumber: initialSettings.whatsappNumber ?? '+919876543210',
-    whatsappMessage: initialSettings.whatsappMessage ?? 'Hello AERON team, I am interested in your products.',
-    contactEmail: initialSettings.contactEmail ?? 'contact@aeronprofessional.com',
-    supportEmail: initialSettings.supportEmail ?? 'support@aeronprofessional.com',
-    businessPhone: initialSettings.businessPhone ?? '+91 98765 43210',
-    copyrightText: initialSettings.copyrightText ?? '© 2026 AERON PROFESSIONAL. All Rights Reserved.',
-    priceDisclaimer: initialSettings.priceDisclaimer ?? 'Prices inclusive of all taxes. Free shipping across India.',
-    seoTitle: initialSettings.seoTitle ?? 'AERON PROFESSIONAL | Precision Salon Grade Tools',
-    seoDescription: initialSettings.seoDescription ?? 'Discover AERON Professional hair dryers, stylers and salon tools engineered for perfection.',
-  });
+  const update = (key: string, value: string) => {
+    setSuccess(false);
 
-  const handleChange = (key: string, value: string) => {
-    setSettings((prev) => ({ ...prev, [key]: value }));
+    setSettings((previous) => ({
+      ...previous,
+      [key]: value,
+
+      ...(key === 'contactEmail' && sameEmail
+        ? { supportEmail: value }
+        : {}),
+    }));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+
+    if (loading) return;
+
     setError('');
     setSuccess(false);
 
-    try {
-      const res = await fetch('/api/admin/settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings),
-      });
+    const payload = {
+      ...settings,
+      instagramUrl: settings.instagramUrl.trim(),
+      instagramHandle: settings.instagramHandle.trim(),
+      whatsappNumber:
+        settings.whatsappNumber.replace(/\D/g, ''),
+      contactEmail: settings.contactEmail.trim(),
+      supportEmail: sameEmail
+        ? settings.contactEmail.trim()
+        : settings.supportEmail.trim(),
+      businessPhone: settings.businessPhone.trim(),
+    };
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Failed to save settings');
+    if (
+      payload.whatsappNumber &&
+      !/^\d{8,15}$/.test(payload.whatsappNumber)
+    ) {
+      setError(
+        'WhatsApp number must include country code and contain 8–15 digits. Example: 919819628073.'
+      );
+      return;
+    }
+
+    if (payload.instagramUrl) {
+      try {
+        const url = new URL(payload.instagramUrl);
+
+        if (
+          url.protocol !== 'https:' &&
+          url.protocol !== 'http:'
+        ) {
+          throw new Error('Invalid protocol');
+        }
+      } catch {
+        setError(
+          'Please enter a valid Instagram URL starting with https://.'
+        );
+        return;
+      }
+    }
+
+    setLoading(true);
+
+    try {
+      const response = await fetch(
+        '/api/admin/settings',
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      const data = await response
+        .json()
+        .catch(() => ({}));
+
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.error || 'Failed to save settings.'
+        );
       }
 
+      setSettings(payload);
       setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
       router.refresh();
-    } catch (err: any) {
-      setError(err.message || 'Failed to save settings');
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to save settings.'
+      );
     } finally {
       setLoading(false);
     }
   };
 
-  const fieldClass = "w-full border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:border-black";
-  const labelClass = "block text-xs font-bold tracking-wider text-gray-600 mb-1";
-
   return (
-    <form onSubmit={handleSubmit} className="space-y-6 max-w-4xl">
+    <form
+      onSubmit={submit}
+      className="w-full max-w-4xl space-y-6"
+    >
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 text-sm p-4 rounded">
+        <div
+          role="alert"
+          className="flex gap-2 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+        >
+          <AlertCircle size={18} className="shrink-0" />
           {error}
         </div>
       )}
+
       {success && (
-        <div className="bg-green-50 border border-green-200 text-green-700 text-sm p-4 rounded flex items-center gap-2">
-          <CheckCircle size={16} /> Settings successfully updated!
+        <div
+          role="status"
+          className="flex gap-2 rounded-md border border-green-200 bg-green-50 p-4 text-sm text-green-700"
+        >
+          <CheckCircle
+            size={18}
+            className="shrink-0"
+          />
+          Settings saved successfully.
         </div>
       )}
 
-      {/* Brand & General */}
-      <div className="bg-white border border-gray-200 p-6">
-        <h2 className="text-base font-semibold text-gray-900 mb-4 pb-2 border-b border-gray-100">
-          Brand & General Information
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className={labelClass}>BRAND NAME</label>
-            <input
-              value={settings.brandName}
-              onChange={(e) => handleChange('brandName', e.target.value)}
-              className={fieldClass}
-            />
-          </div>
-          <div>
-            <label className={labelClass}>COPYRIGHT TEXT</label>
-            <input
-              value={settings.copyrightText}
-              onChange={(e) => handleChange('copyrightText', e.target.value)}
-              className={fieldClass}
-            />
-          </div>
-        </div>
-      </div>
+      {/* CONTACT DETAILS */}
 
-      {/* Announcement Bar */}
-      <div className="bg-white border border-gray-200 p-6">
-        <h2 className="text-base font-semibold text-gray-900 mb-4 pb-2 border-b border-gray-100">
-          Announcement Bar
-        </h2>
-        <div className="space-y-4">
-          <div>
-            <label className={labelClass}>ANNOUNCEMENT TEXT</label>
-            <input
-              value={settings.announcementBarText}
-              onChange={(e) => handleChange('announcementBarText', e.target.value)}
-              className={fieldClass}
-              placeholder="SPECIAL PROMOTION OR SHIPPING MESSAGE"
-            />
-          </div>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={settings.announcementBarVisible === 'true'}
-              onChange={(e) => handleChange('announcementBarVisible', e.target.checked ? 'true' : 'false')}
-              className="accent-black w-4 h-4"
-            />
-            <span className="text-sm font-medium">Show Announcement Bar on Website</span>
-          </label>
-        </div>
-      </div>
-
-      {/* Contact & Support */}
-      <div className="bg-white border border-gray-200 p-6">
-        <h2 className="text-base font-semibold text-gray-900 mb-4 pb-2 border-b border-gray-100">
-          Contact & Communication
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className={labelClass}>CONTACT EMAIL</label>
-            <input
-              type="email"
-              value={settings.contactEmail}
-              onChange={(e) => handleChange('contactEmail', e.target.value)}
-              className={fieldClass}
-            />
-          </div>
-          <div>
-            <label className={labelClass}>SUPPORT EMAIL</label>
-            <input
-              type="email"
-              value={settings.supportEmail}
-              onChange={(e) => handleChange('supportEmail', e.target.value)}
-              className={fieldClass}
-            />
-          </div>
-          <div>
-            <label className={labelClass}>BUSINESS PHONE</label>
-            <input
-              value={settings.businessPhone}
-              onChange={(e) => handleChange('businessPhone', e.target.value)}
-              className={fieldClass}
-            />
-          </div>
-          <div>
-            <label className={labelClass}>WHATSAPP NUMBER</label>
-            <input
-              value={settings.whatsappNumber}
-              onChange={(e) => handleChange('whatsappNumber', e.target.value)}
-              className={fieldClass}
-              placeholder="+91..."
-            />
-          </div>
-          <div className="md:col-span-2">
-            <label className={labelClass}>DEFAULT WHATSAPP PRE-FILLED MESSAGE</label>
-            <input
-              value={settings.whatsappMessage}
-              onChange={(e) => handleChange('whatsappMessage', e.target.value)}
-              className={fieldClass}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Social Media */}
-      <div className="bg-white border border-gray-200 p-6">
-        <h2 className="text-base font-semibold text-gray-900 mb-4 pb-2 border-b border-gray-100">
-          Social Media Links
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className={labelClass}>INSTAGRAM PROFILE URL</label>
-            <input
-              value={settings.instagramUrl}
-              onChange={(e) => handleChange('instagramUrl', e.target.value)}
-              className={fieldClass}
-              placeholder="https://instagram.com/..."
-            />
-          </div>
-          <div>
-            <label className={labelClass}>INSTAGRAM HANDLE</label>
-            <input
-              value={settings.instagramHandle}
-              onChange={(e) => handleChange('instagramHandle', e.target.value)}
-              className={fieldClass}
-              placeholder="@aeronprofessional"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Pricing & Policy */}
-      <div className="bg-white border border-gray-200 p-6">
-        <h2 className="text-base font-semibold text-gray-900 mb-4 pb-2 border-b border-gray-100">
-          Pricing & Disclaimers
-        </h2>
+      <section className={sectionClass}>
         <div>
-          <label className={labelClass}>PRICE & TAX DISCLAIMER</label>
-          <input
-            value={settings.priceDisclaimer}
-            onChange={(e) => handleChange('priceDisclaimer', e.target.value)}
-            className={fieldClass}
+          <h2 className="text-lg font-semibold">
+            Contact & Communication
+          </h2>
+
+          <p className="mt-1 text-xs leading-5 text-gray-500">
+            Manage the contact information shown on
+            your website.
+          </p>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <TextField
+            label="CONTACT EMAIL"
+            type="email"
+            value={settings.contactEmail}
+            onChange={(value) =>
+              update('contactEmail', value)
+            }
+            placeholder="yourname@yahoo.com"
+          />
+
+          <TextField
+            label="BUSINESS PHONE"
+            value={settings.businessPhone}
+            onChange={(value) =>
+              update('businessPhone', value)
+            }
+            placeholder="+91 98765 43210"
+          />
+
+          <TextField
+            label="WHATSAPP NUMBER"
+            type="tel"
+            value={settings.whatsappNumber}
+            onChange={(value) =>
+              update('whatsappNumber', value)
+            }
+            hint="With country code. Example: 919819628073"
+          />
+
+          <TextField
+            label="WHATSAPP MESSAGE"
+            value={settings.whatsappMessage}
+            onChange={(value) =>
+              update('whatsappMessage', value)
+            }
           />
         </div>
-      </div>
 
-      {/* SEO & Meta */}
-      <div className="bg-white border border-gray-200 p-6">
-        <h2 className="text-base font-semibold text-gray-900 mb-4 pb-2 border-b border-gray-100">
-          Global SEO
-        </h2>
-        <div className="space-y-4">
-          <div>
-            <label className={labelClass}>DEFAULT SEO TITLE</label>
+        {/* COMMON EMAIL SETTING */}
+
+        <div className="rounded-md border border-gray-200 bg-gray-50 p-4">
+          <label className="flex cursor-pointer items-start gap-3">
             <input
-              value={settings.seoTitle}
-              onChange={(e) => handleChange('seoTitle', e.target.value)}
-              className={fieldClass}
-            />
-          </div>
-          <div>
-            <label className={labelClass}>DEFAULT META DESCRIPTION</label>
-            <textarea
-              value={settings.seoDescription}
-              onChange={(e) => handleChange('seoDescription', e.target.value)}
-              rows={3}
-              className={fieldClass}
-            />
-          </div>
-        </div>
-      </div>
+              type="checkbox"
+              checked={sameEmail}
+              onChange={(event) => {
+                const checked = event.target.checked;
 
-      {/* Action Buttons */}
-      <div className="flex justify-end gap-3 pt-4">
+                setSameEmail(checked);
+
+                if (checked) {
+                  setSettings((previous) => ({
+                    ...previous,
+                    supportEmail:
+                      previous.contactEmail,
+                  }));
+                }
+              }}
+              className="mt-1 h-4 w-4 accent-black"
+            />
+
+            <span>
+              <span className="block text-sm font-semibold">
+                Use same email for Contact & Support
+              </span>
+
+              <span className="mt-1 block text-xs text-gray-500">
+                Changing Contact Email will also
+                update Support Email.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        {!sameEmail && (
+          <TextField
+            label="SEPARATE SUPPORT EMAIL"
+            type="email"
+            value={settings.supportEmail}
+            onChange={(value) =>
+              update('supportEmail', value)
+            }
+            placeholder="support@example.com"
+          />
+        )}
+      </section>
+
+      {/* SOCIAL MEDIA */}
+
+      <section className={sectionClass}>
+        <h2 className="text-lg font-semibold">
+          Social Media Links
+        </h2>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <TextField
+            label="INSTAGRAM PROFILE URL"
+            type="url"
+            value={settings.instagramUrl}
+            onChange={(value) =>
+              update('instagramUrl', value)
+            }
+            placeholder="https://instagram.com/..."
+          />
+
+          <TextField
+            label="INSTAGRAM HANDLE"
+            value={settings.instagramHandle}
+            onChange={(value) =>
+              update('instagramHandle', value)
+            }
+            placeholder="@username"
+          />
+        </div>
+      </section>
+
+      {/* GENERAL INFORMATION */}
+
+      <section className={sectionClass}>
+        <h2 className="text-lg font-semibold">
+          Brand & General Information
+        </h2>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <TextField
+            label="BRAND NAME"
+            value={settings.brandName}
+            onChange={(value) =>
+              update('brandName', value)
+            }
+          />
+
+          <TextField
+            label="COPYRIGHT TEXT"
+            value={settings.copyrightText}
+            onChange={(value) =>
+              update('copyrightText', value)
+            }
+          />
+        </div>
+      </section>
+
+      {/* ANNOUNCEMENT */}
+
+      <section className={sectionClass}>
+        <h2 className="text-lg font-semibold">
+          Announcement Bar
+        </h2>
+
+        <TextField
+          label="ANNOUNCEMENT TEXT"
+          value={settings.announcementBarText}
+          onChange={(value) =>
+            update('announcementBarText', value)
+          }
+        />
+
+        <label className="flex cursor-pointer items-center gap-3">
+          <input
+            type="checkbox"
+            checked={
+              settings.announcementBarVisible ===
+              'true'
+            }
+            onChange={(event) =>
+              update(
+                'announcementBarVisible',
+                String(event.target.checked)
+              )
+            }
+            className="h-4 w-4 accent-black"
+          />
+
+          <span className="text-sm">
+            Show announcement bar on website
+          </span>
+        </label>
+      </section>
+
+      {/* PRICING */}
+
+      <section className={sectionClass}>
+        <h2 className="text-lg font-semibold">
+          Pricing & Disclaimer
+        </h2>
+
+        <TextField
+          label="PRICE DISCLAIMER"
+          value={settings.priceDisclaimer}
+          onChange={(value) =>
+            update('priceDisclaimer', value)
+          }
+        />
+      </section>
+
+      {/* SEO */}
+
+      <section className={sectionClass}>
+        <h2 className="text-lg font-semibold">
+          SEO & Search Results
+        </h2>
+
+        <TextField
+          label="DEFAULT SEO TITLE"
+          value={settings.seoTitle}
+          onChange={(value) =>
+            update('seoTitle', value)
+          }
+        />
+
+        <label className="block">
+          <span className={labelClass}>
+            SEO DESCRIPTION
+          </span>
+
+          <textarea
+            rows={3}
+            value={settings.seoDescription}
+            onChange={(event) =>
+              update(
+                'seoDescription',
+                event.target.value
+              )
+            }
+            className={fieldClass}
+          />
+        </label>
+      </section>
+
+      {/* SAVE */}
+
+      <div className="flex justify-end pb-6">
         <button
           type="submit"
           disabled={loading}
-          className="flex items-center gap-2 bg-black text-white px-8 py-3 text-xs font-bold tracking-wider hover:bg-gray-800 transition disabled:opacity-50 cursor-pointer"
+          className="
+            inline-flex
+            min-h-12
+            items-center
+            justify-center
+            gap-2
+            rounded-md
+            bg-black
+            px-7
+            py-3
+            text-xs
+            font-bold
+            tracking-wider
+            text-white
+            hover:bg-gray-800
+            disabled:opacity-50
+          "
         >
-          <Save size={14} /> {loading ? 'SAVING...' : 'SAVE SETTINGS'}
+          <Save size={16} />
+
+          {loading
+            ? 'SAVING...'
+            : 'SAVE WEBSITE SETTINGS'}
         </button>
       </div>
     </form>

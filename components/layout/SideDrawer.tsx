@@ -2,11 +2,7 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
-import {
-  X,
-  ArrowRight,
-} from 'lucide-react';
-
+import { X, ArrowRight } from 'lucide-react';
 import { Category } from '@/types';
 
 interface SideDrawerProps {
@@ -24,21 +20,14 @@ export const SideDrawer: React.FC<SideDrawerProps> = ({
 }) => {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
-  // Prevent scrolling behind the drawer.
-  // Escape key closes the menu.
-  // Restore focus when the drawer closes.
-
   useEffect(() => {
     if (!isOpen) return;
 
-    const previousOverflow =
-      document.body.style.overflow;
-
+    const previousOverflow = document.body.style.overflow;
     const previousFocus =
       document.activeElement as HTMLElement | null;
 
     document.body.style.overflow = 'hidden';
-
     closeButtonRef.current?.focus();
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -46,55 +35,57 @@ export const SideDrawer: React.FC<SideDrawerProps> = ({
         onClose();
       }
 
-      if (event.key === 'Tab') {
-        const drawer = document.getElementById(
-          'aeron-mobile-navigation'
-        );
+      if (event.key !== 'Tab') return;
 
-        if (!drawer) return;
+      const drawer = document.getElementById(
+        'aeron-mobile-navigation'
+      );
 
-        const focusableElements =
-          drawer.querySelectorAll<HTMLElement>(
-            'button:not(:disabled), a[href], input:not(:disabled)'
-          );
+      if (!drawer) return;
 
-        if (!focusableElements.length) return;
+      const elements = drawer.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), a[href], input:not(:disabled)'
+      );
 
-        const first = focusableElements[0];
+      if (!elements.length) return;
 
-        const last =
-          focusableElements[focusableElements.length - 1];
+      const first = elements[0];
+      const last = elements[elements.length - 1];
 
-        if (
-          event.shiftKey &&
-          document.activeElement === first
-        ) {
-          event.preventDefault();
-          last.focus();
-        } else if (
-          !event.shiftKey &&
-          document.activeElement === last
-        ) {
-          event.preventDefault();
-          first.focus();
-        }
+      if (
+        event.shiftKey &&
+        document.activeElement === first
+      ) {
+        event.preventDefault();
+        last.focus();
+      } else if (
+        !event.shiftKey &&
+        document.activeElement === last
+      ) {
+        event.preventDefault();
+        first.focus();
       }
     };
 
-    document.addEventListener(
-      'keydown',
-      handleKeyDown
-    );
+    document.addEventListener('keydown', handleKeyDown);
+
+    // The drawer is mobile/tablet only.
+    // Close it if screen becomes desktop width.
+    const media = window.matchMedia('(min-width: 1024px)');
+
+    const handleDesktop = () => {
+      if (media.matches) onClose();
+    };
+
+    media.addEventListener('change', handleDesktop);
 
     return () => {
-      document.body.style.overflow =
-        previousOverflow;
-
+      document.body.style.overflow = previousOverflow;
       document.removeEventListener(
         'keydown',
         handleKeyDown
       );
-
+      media.removeEventListener('change', handleDesktop);
       previousFocus?.focus();
     };
   }, [isOpen, onClose]);
@@ -106,19 +97,15 @@ export const SideDrawer: React.FC<SideDrawerProps> = ({
     { label: 'Shop All', view: 'Shop All' },
   ];
 
-  const categoryItems = categories.map(
-    (category) => ({
-      label: category.label || category.name,
-      view: category.name,
-    })
-  );
+  const categoryItems = categories.map((category) => ({
+    label: category.label || category.name,
+    view: category.name,
+    id: category.id,
+  }));
 
   const secondaryItems = [
-    {
-      label: 'Salon Collection',
-      view: 'Professional Collection',
-    },
-    { label: 'Our Story', view: 'About Us' },
+    { label: 'About Us', view: 'About Us' },
+    { label: 'Customer Care', view: 'Customer Care' },
   ];
 
   const handleNavigate = (view: string) => {
@@ -126,86 +113,40 @@ export const SideDrawer: React.FC<SideDrawerProps> = ({
     onClose();
   };
 
+  const navButtonClass =
+    'flex min-h-14 w-full items-center justify-between gap-3 border-b border-[#e9e5de] py-3 text-left text-[15px] font-medium text-[#191919] transition-colors hover:text-[#987345]';
+
   return (
-    <div
-      className="
-        fixed
-        inset-0
-        z-[70]
-        xl:hidden
-      "
-    >
+    <div className="fixed inset-0 z-[70] lg:hidden">
       {/* BACKDROP */}
 
-      <div
-        className="
-          absolute
-          inset-0
-          bg-black/60
-        "
+      <button
+        type="button"
         onClick={onClose}
-        aria-hidden="true"
+        aria-label="Close navigation menu"
+        className="absolute inset-0 h-full w-full cursor-default bg-black/60"
       />
 
-      {/* SIDE DRAWER */}
+      {/* DRAWER */}
 
       <aside
         id="aeron-mobile-navigation"
         role="dialog"
         aria-modal="true"
         aria-labelledby="aeron-menu-title"
-        className="
-          absolute
-          right-0
-          top-0
-          flex
-          h-screen
-          h-[100dvh]
-          w-full
-          max-w-[420px]
-          flex-col
-          overflow-hidden
-          bg-[#faf9f6]
-          shadow-2xl
-          sm:w-[420px]
-        "
+        className="absolute left-0 top-0 flex h-screen h-[100dvh] w-[min(100%,420px)] flex-col overflow-hidden rounded-r-xl bg-[#faf9f6] shadow-2xl"
       >
-        {/* DRAWER HEADER */}
+        {/* HEADER */}
 
-        <div
-          className="
-            flex
-            shrink-0
-            items-center
-            justify-between
-            gap-3
-            border-b
-            border-[#e5e1d9]
-            px-5
-            py-5
-            sm:px-6
-          "
-        >
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#e5e1d9] px-5 py-5 sm:px-6">
           <div className="min-w-0">
-            <p
-              className="
-                text-[10px]
-                font-bold
-                tracking-[0.2em]
-                text-[#977447]
-              "
-            >
+            <p className="text-[10px] font-bold tracking-[0.22em] text-[#977447]">
               AERON PROFESSIONAL
             </p>
 
             <h2
               id="aeron-menu-title"
-              className="
-                serif
-                mt-1
-                text-2xl
-                text-[#191919]
-              "
+              className="serif mt-2 text-[27px] leading-tight text-[#191919]"
             >
               Explore AERON
             </h2>
@@ -216,210 +157,84 @@ export const SideDrawer: React.FC<SideDrawerProps> = ({
             type="button"
             onClick={onClose}
             aria-label="Close navigation menu"
-            className="
-              flex
-              h-11
-              w-11
-              shrink-0
-              items-center
-              justify-center
-              rounded-md
-              border
-              border-[#e5e1d9]
-              bg-white
-              transition-colors
-              hover:bg-gray-100
-              focus-visible:outline
-              focus-visible:outline-2
-              focus-visible:outline-black
-            "
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-[#e5e1d9] bg-white hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-black"
           >
-            <X size={22} />
+            <X size={23} />
           </button>
         </div>
 
-        {/* SCROLLABLE MENU CONTENT */}
+        {/* SCROLLABLE CONTENT */}
 
         <nav
           aria-label="Mobile navigation"
-          className="
-            min-h-0
-            flex-1
-            overflow-y-auto
-            overscroll-contain
-            px-5
-            py-5
-            sm:px-6
-          "
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6"
         >
-          {/* PRIMARY LINKS */}
-
-          <div className="space-y-1">
+          <div>
             {primaryItems.map((item) => (
               <button
                 key={item.view}
                 type="button"
-                onClick={() =>
-                  handleNavigate(item.view)
-                }
-                className="
-                  flex
-                  min-h-12
-                  w-full
-                  items-center
-                  justify-between
-                  gap-3
-                  border-b
-                  border-[#e9e5de]
-                  py-3
-                  text-left
-                  text-sm
-                  font-semibold
-                  transition-colors
-                  hover:text-[#987345]
-                "
+                onClick={() => handleNavigate(item.view)}
+                className={`${navButtonClass} font-semibold`}
               >
                 <span>{item.label}</span>
-
-                <ArrowRight
-                  size={16}
-                  className="shrink-0"
-                />
+                <ArrowRight size={17} className="shrink-0" />
               </button>
             ))}
           </div>
 
-          {/* CATEGORIES */}
+          {/* DYNAMIC CATEGORIES */}
 
           {categoryItems.length > 0 && (
-            <div className="mt-7">
-              <p
-                className="
-                  mb-3
-                  text-[10px]
-                  font-bold
-                  uppercase
-                  tracking-[0.2em]
-                  text-[#977447]
-                "
-              >
+            <div className="mt-8">
+              <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.2em] text-[#977447]">
                 Shop by Category
               </p>
 
-              <div className="space-y-1">
-                {categoryItems.map((item) => (
-                  <button
-                    key={item.view}
-                    type="button"
-                    onClick={() =>
-                      handleNavigate(item.view)
-                    }
-                    className="
-                      flex
-                      min-h-12
-                      w-full
-                      items-center
-                      justify-between
-                      gap-3
-                      border-b
-                      border-[#e9e5de]
-                      py-3
-                      text-left
-                      text-sm
-                      font-medium
-                      transition-colors
-                      hover:text-[#987345]
-                    "
-                  >
-                    <span className="min-w-0 break-words">
-                      {item.label}
-                    </span>
-
-                    <ArrowRight
-                      size={16}
-                      className="shrink-0"
-                    />
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* OTHER LINKS */}
-
-          <div className="mt-7">
-            <p
-              className="
-                mb-3
-                text-[10px]
-                font-bold
-                uppercase
-                tracking-[0.2em]
-                text-[#977447]
-              "
-            >
-              Discover
-            </p>
-
-            <div className="space-y-1">
-              {secondaryItems.map((item) => (
+              {categoryItems.map((item) => (
                 <button
-                  key={item.view}
+                  key={item.id}
                   type="button"
-                  onClick={() =>
-                    handleNavigate(item.view)
-                  }
-                  className="
-                    flex
-                    min-h-12
-                    w-full
-                    items-center
-                    justify-between
-                    gap-3
-                    border-b
-                    border-[#e9e5de]
-                    py-3
-                    text-left
-                    text-sm
-                    font-medium
-                    transition-colors
-                    hover:text-[#987345]
-                  "
+                  onClick={() => handleNavigate(item.view)}
+                  className={navButtonClass}
                 >
-                  <span>{item.label}</span>
-
+                  <span className="min-w-0 break-words">
+                    {item.label}
+                  </span>
                   <ArrowRight
-                    size={16}
+                    size={17}
                     className="shrink-0"
                   />
                 </button>
               ))}
             </div>
+          )}
+
+          {/* ABOUT / CUSTOMER CARE */}
+
+          <div className="mt-8">
+            <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.2em] text-[#977447]">
+              Discover
+            </p>
+
+            {secondaryItems.map((item) => (
+              <button
+                key={item.view}
+                type="button"
+                onClick={() => handleNavigate(item.view)}
+                className={navButtonClass}
+              >
+                <span>{item.label}</span>
+                <ArrowRight size={17} className="shrink-0" />
+              </button>
+            ))}
           </div>
         </nav>
 
-        {/* DRAWER FOOTER */}
+        {/* BOTTOM */}
 
-        <div
-          className="
-            shrink-0
-            border-t
-            border-[#e5e1d9]
-            bg-[#f1eee8]
-            px-5
-            py-4
-            text-center
-            sm:px-6
-          "
-        >
-          <p
-            className="
-              text-[10px]
-              font-semibold
-              tracking-[0.14em]
-              text-[#977447]
-            "
-          >
+        <div className="shrink-0 border-t border-[#e5e1d9] bg-[#f1eee8] px-5 py-4 text-center">
+          <p className="text-[10px] font-semibold tracking-[0.14em] text-[#977447]">
             ELEVATE YOUR EVERYDAY STYLE
           </p>
         </div>

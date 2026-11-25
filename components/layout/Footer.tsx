@@ -1,5 +1,6 @@
 
 import React from 'react';
+
 import {
   Instagram,
   MessageCircle,
@@ -10,18 +11,9 @@ import { SupportTab } from '@/components/modals/SupportModal';
 import { SiteSettings } from '@/types';
 
 interface FooterProps {
-  onNavigate: (view: string) => void;
   onOpenSupport: (tab: SupportTab) => void;
   settings: SiteSettings;
 }
-
-const EXPLORE_LINKS = [
-  'Shop All',
-  'Straighteners',
-  'Hair Dryers',
-  'Curling Tools',
-  'Professional Collection',
-];
 
 const CARE_LINKS: {
   label: string;
@@ -29,14 +21,8 @@ const CARE_LINKS: {
 }[] = [
   { label: 'Contact Us', tab: 'contact' },
   { label: 'FAQs', tab: 'faqs' },
-  {
-    label: '1-Year Warranty Guide',
-    tab: 'warranty',
-  },
-  {
-    label: 'Salon & Bulk Inquiries',
-    tab: 'bulk',
-  },
+  { label: '1-Year Warranty Guide', tab: 'warranty' },
+  { label: 'Salon & Bulk Inquiries', tab: 'bulk' },
 ];
 
 const headingClass =
@@ -52,43 +38,24 @@ const iconClass =
   'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-[#c6a77a] transition-colors group-hover:border-[#c6a77a]';
 
 export const Footer: React.FC<FooterProps> = ({
-  onNavigate,
   onOpenSupport,
   settings,
 }) => {
   const year = new Date().getFullYear();
 
-  const whatsappUrl = settings.whatsappNumber
-    ? `https://wa.me/${settings.whatsappNumber}?text=${encodeURIComponent(
-        settings.whatsappMessage ?? ''
+  const whatsappNumber =
+    settings.whatsappNumber.replace(/\D/g, '');
+
+  const whatsappUrl = whatsappNumber
+    ? `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(
+        settings.whatsappMessage || ''
       )}`
     : '';
 
   return (
     <footer className="w-full min-w-0 bg-[#151515] text-white">
-      <div
-        className="
-          mx-auto
-          grid
-          w-full
-          max-w-7xl
-          min-w-0
-          grid-cols-1
-          items-start
-          gap-x-8
-          gap-y-10
-          px-4
-          py-12
-          sm:grid-cols-2
-          sm:px-6
-          sm:py-14
-          lg:grid-cols-4
-          lg:gap-x-10
-          lg:px-8
-          lg:py-16
-        "
-      >
-        {/* BRAND AND CONTACTS */}
+      <div className="mx-auto grid w-full max-w-7xl grid-cols-1 items-start gap-x-12 gap-y-12 px-4 py-14 sm:grid-cols-2 sm:px-6 sm:py-16 lg:grid-cols-3 lg:gap-x-16 lg:px-8 lg:py-20">
+        {/* BRAND / CONTACT */}
 
         <div className="min-w-0">
           <h3 className={headingClass}>
@@ -97,6 +64,11 @@ export const Footer: React.FC<FooterProps> = ({
               PROFESSIONAL
             </span>
           </h3>
+
+          <p className="mb-7 max-w-sm text-sm leading-7 text-gray-400">
+            Professional-inspired styling tools
+            designed for your everyday routine.
+          </p>
 
           <div className="space-y-4">
             {settings.instagramUrl && (
@@ -112,12 +84,13 @@ export const Footer: React.FC<FooterProps> = ({
                 </span>
 
                 <span className="min-w-0 break-words">
-                  {settings.instagramHandle}
+                  {settings.instagramHandle ||
+                    'Instagram'}
                 </span>
               </a>
             )}
 
-            {settings.whatsappNumber && (
+            {whatsappNumber && (
               <a
                 href={whatsappUrl}
                 target="_blank"
@@ -130,7 +103,8 @@ export const Footer: React.FC<FooterProps> = ({
                 </span>
 
                 <span className="min-w-0 break-words">
-                  {settings.businessPhone}
+                  {settings.businessPhone ||
+                    `+${whatsappNumber}`}
                 </span>
               </a>
             )}
@@ -151,28 +125,6 @@ export const Footer: React.FC<FooterProps> = ({
               </a>
             )}
           </div>
-        </div>
-
-        {/* EXPLORE */}
-
-        <div className="min-w-0">
-          <h3 className={headingClass}>
-            EXPLORE
-          </h3>
-
-          <ul className="space-y-2">
-            {EXPLORE_LINKS.map((link) => (
-              <li key={link}>
-                <button
-                  type="button"
-                  onClick={() => onNavigate(link)}
-                  className={linkClass}
-                >
-                  {link}
-                </button>
-              </li>
-            ))}
-          </ul>
         </div>
 
         {/* CUSTOMER CARE */}
@@ -199,15 +151,16 @@ export const Footer: React.FC<FooterProps> = ({
 
         {/* VERIFIED STORES */}
 
-        <div className="min-w-0">
+        <div className="min-w-0 sm:col-span-2 lg:col-span-1">
           <h3 className={headingClass}>
             VERIFIED STORES
           </h3>
 
-          <p className="break-words text-sm leading-7 text-gray-400">
-            Genuine AERON products are officially
-            available on Amazon, Flipkart, Nykaa
-            &amp; authorized salon distributors.
+          <p className="max-w-sm text-sm leading-7 text-gray-400">
+            Explore genuine AERON Professional
+            products through our verified marketplace
+            listings and authorized distribution
+            partners.
           </p>
 
           <p className="mt-4 text-sm leading-6 text-gray-500">
@@ -215,7 +168,7 @@ export const Footer: React.FC<FooterProps> = ({
           </p>
 
           {settings.priceDisclaimer && (
-            <p className="mt-3 break-words text-xs leading-6 text-gray-500">
+            <p className="mt-3 max-w-sm break-words text-xs leading-6 text-gray-500">
               {settings.priceDisclaimer}
             </p>
           )}
@@ -224,18 +177,8 @@ export const Footer: React.FC<FooterProps> = ({
 
       {/* COPYRIGHT */}
 
-      <div className="border-t border-white/10 px-4 py-5 sm:px-6">
-        <p
-          className="
-            mx-auto
-            max-w-7xl
-            break-words
-            text-center
-            text-xs
-            leading-6
-            text-gray-500
-          "
-        >
+      <div className="border-t border-white/10 px-4 py-6 sm:px-6">
+        <p className="mx-auto max-w-7xl break-words text-center text-xs leading-6 text-gray-500">
           © {year} {settings.copyrightText}
         </p>
       </div>

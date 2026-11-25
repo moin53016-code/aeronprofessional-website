@@ -1,9 +1,15 @@
 
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
+import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
-// Accept external image URLs and locally uploaded images.
+import { prisma } from '@/lib/db';
+import { getSession } from '@/lib/auth';
+
+type Context = {
+  params: Promise<{ id: string }>;
+};
+
 const imageUrlSchema = z.string().refine(
   (value) => {
     if (/^\/uploads\/[a-zA-Z0-9._-]+$/.test(value)) {
@@ -30,70 +36,40 @@ const imageUrlSchema = z.string().refine(
 const updateProductSchema = z.object({
   name: z.string().min(1).optional(),
   slug: z.string().min(1).optional(),
-
-  sku: z.string().optional().nullable(),
-
-  shortDescription: z
-    .string()
-    .optional()
-    .nullable(),
-
+  sku: z.string().nullable().optional(),
+  shortDescription: z.string().nullable().optional(),
   description: z.string().optional(),
 
-  priceInPaise: z
-    .number()
-    .int()
-    .nonnegative()
-    .optional(),
+  priceInPaise: z.number().int().nonnegative().optional(),
 
   originalPriceInPaise: z
     .number()
     .int()
     .nonnegative()
-    .optional()
-    .nullable(),
+    .nullable()
+    .optional(),
 
   currency: z.string().optional(),
 
   status: z
-    .enum([
-      'DRAFT',
-      'ACTIVE',
-      'SOLD_OUT',
-      'ARCHIVED',
-    ])
+    .enum(['DRAFT', 'ACTIVE', 'SOLD_OUT', 'ARCHIVED'])
     .optional(),
 
   isFeatured: z.boolean().optional(),
   isNew: z.boolean().optional(),
+  displayOrder: z.number().int().optional(),
+  badgeText: z.string().nullable().optional(),
 
-  displayOrder: z
-    .number()
-    .int()
-    .optional(),
+  primaryImageUrl: imageUrlSchema.nullable().optional(),
 
-  badgeText: z
-    .string()
-    .optional()
-    .nullable(),
-
-  primaryImageUrl: imageUrlSchema
-    .optional()
-    .nullable(),
-
-  categoryIds: z
-    .array(z.string())
-    .optional(),
+  categoryIds: z.array(z.string()).optional(),
 
   specifications: z
     .array(
       z.object({
         label: z.string().min(1),
-        value: z.string().optional().nullable(),
-        displayOrder: z
-          .number()
-          .int()
-          .default(0),
+        value: z.string().nullable().optional(),
+        displayOrder: z.number().int().default(0),
       })
     )
     .optional(),
@@ -102,17 +78,9 @@ const updateProductSchema = z.object({
     .array(
       z.object({
         url: imageUrlSchema,
-        altText: z
-          .string()
-          .optional()
-          .nullable(),
-        displayOrder: z
-          .number()
-          .int()
-          .default(0),
-        isPrimary: z
-          .boolean()
-          .default(false),
+        altText: z.string().nullable().optional(),
+        displayOrder: z.number().int().default(0),
+        isPrimary: z.boolean().default(false),
       })
     )
     .optional(),
@@ -123,62 +91,97 @@ const updateProductSchema = z.object({
         marketplaceId: z.string(),
         url: z.string().url(),
         isActive: z.boolean().default(true),
-        displayOrder: z
-          .number()
-          .int()
-          .default(0),
+        displayOrder: z.number().int().default(0),
       })
     )
     .optional(),
 });
 
-type Context = {
-  params: Promise<{
-    id: string;
-  }>;
-};
+function unauthorized() {
+  return NextResponse.json(
+    {
+      success: false,
+      error: 'Unauthorized. Please log in.',
+    },
+    { status: 401 }
+  );
+}
 
-// GET SINGLE PRODUCT
+function refreshProducts() {
+  revalidatePath('/');
+  revalidatePath('/admin/products');
+}
+
+function handleError(
+  error: unknown,
+  operation: string
+) {
+  console.error(`Product ${operation} error:`, error);
+
+  const code =
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error
+      ? error.code
+      : undefined;
+
+  if (code === 'P2025') {
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Product not found.',
+      },
+      { status: 404 }
+    );
+  }
+
+  if (code === 'P2002') {
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Product slug already exists.',
+      },
+      { status: 409 }
+    );
+  }
+
+  return NextResponse.json(
+    {
+      success: false,
+      error: `Failed to ${operation} product.`,
+    },
+    { status: 500 }
+  );
+}
+
+// GET PRODUCT
 
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: Context
 ) {
   try {
+    if (!(await getSession())) return unauthorized();
+
     const { id } = await params;
 
     const product = await prisma.product.findUnique({
       where: { id },
-
       include: {
         images: {
-          orderBy: {
-            displayOrder: 'asc',
-          },
+          orderBy: { displayOrder: 'asc' },
         },
-
         specifications: {
-          orderBy: {
-            displayOrder: 'asc',
-          },
+          orderBy: { displayOrder: 'asc' },
         },
-
         categories: {
-          include: {
-            category: true,
-          },
+          include: { category: true },
         },
-
         marketplaceLinks: {
-          include: {
-            marketplace: true,
-          },
+          include: { marketplace: true },
         },
-
         discountProducts: {
-          include: {
-            campaign: true,
-          },
+          include: { campaign: true },
         },
       },
     });
@@ -186,7 +189,8 @@ export async function GET(
     if (!product) {
       return NextResponse.json(
         {
-          error: 'Product not found',
+          success: false,
+          error: 'Product not found.',
         },
         { status: 404 }
       );
@@ -197,17 +201,7 @@ export async function GET(
       product,
     });
   } catch (error) {
-    console.error(
-      'Fetch single product error:',
-      error
-    );
-
-    return NextResponse.json(
-      {
-        error: 'Internal server error',
-      },
-      { status: 500 }
-    );
+    return handleError(error, 'fetch');
   }
 }
 
@@ -218,18 +212,18 @@ export async function PUT(
   { params }: Context
 ) {
   try {
+    if (!(await getSession())) return unauthorized();
+
     const { id } = await params;
+    const body = await request.json().catch(() => null);
+    const parsed = updateProductSchema.safeParse(body);
 
-    const body = await request.json();
-
-    const result =
-      updateProductSchema.safeParse(body);
-
-    if (!result.success) {
+    if (!parsed.success) {
       return NextResponse.json(
         {
-          error: 'Invalid input',
-          details: result.error.flatten(),
+          success: false,
+          error: 'Invalid product data.',
+          details: parsed.error.flatten(),
         },
         { status: 400 }
       );
@@ -241,7 +235,7 @@ export async function PUT(
       images,
       marketplaceLinks,
       ...productData
-    } = result.data;
+    } = parsed.data;
 
     const updated = await prisma.$transaction(
       async (tx) => {
@@ -250,13 +244,10 @@ export async function PUT(
         } = {};
 
         if (productData.status === 'ACTIVE') {
-          const existing =
-            await tx.product.findUnique({
-              where: { id },
-              select: {
-                publishedAt: true,
-              },
-            });
+          const existing = await tx.product.findUnique({
+            where: { id },
+            select: { publishedAt: true },
+          });
 
           if (existing && !existing.publishedAt) {
             publishedAtUpdate = {
@@ -267,161 +258,113 @@ export async function PUT(
 
         await tx.product.update({
           where: { id },
-
           data: {
             ...productData,
             ...publishedAtUpdate,
           },
         });
 
-        // UPDATE CATEGORIES
+        // PRODUCT CATEGORIES
 
         if (categoryIds !== undefined) {
           await tx.productCategory.deleteMany({
-            where: {
-              productId: id,
-            },
+            where: { productId: id },
           });
 
           if (categoryIds.length > 0) {
             await tx.productCategory.createMany({
-              data: categoryIds.map(
-                (categoryId) => ({
-                  productId: id,
-                  categoryId,
-                })
-              ),
-            });
-          }
-        }
-
-        // UPDATE SPECIFICATIONS
-
-        if (specifications !== undefined) {
-          await tx.productSpecification.deleteMany({
-            where: {
-              productId: id,
-            },
-          });
-
-          if (specifications.length > 0) {
-            await tx.productSpecification.createMany({
-              data: specifications.map(
-                (spec) => ({
-                  productId: id,
-                  label: spec.label,
-                  value: spec.value,
-                  displayOrder:
-                    spec.displayOrder,
-                })
-              ),
-            });
-          }
-        }
-
-        // UPDATE PRODUCT IMAGES
-
-        if (images !== undefined) {
-          await tx.productImage.deleteMany({
-            where: {
-              productId: id,
-            },
-          });
-
-          if (images.length > 0) {
-            await tx.productImage.createMany({
-              data: images.map((img) => ({
+              data: categoryIds.map((categoryId) => ({
                 productId: id,
-                url: img.url,
-                altText: img.altText,
-                displayOrder:
-                  img.displayOrder,
-                isPrimary:
-                  img.isPrimary,
+                categoryId,
               })),
             });
           }
         }
 
-        // MAINTAIN COMPATIBILITY WITH
-        // EXISTING MARKETPLACE RELATIONS
+        // PRODUCT SPECIFICATIONS
+
+        if (specifications !== undefined) {
+          await tx.productSpecification.deleteMany({
+            where: { productId: id },
+          });
+
+          if (specifications.length > 0) {
+            await tx.productSpecification.createMany({
+              data: specifications.map((spec) => ({
+                productId: id,
+                label: spec.label,
+                value: spec.value,
+                displayOrder: spec.displayOrder,
+              })),
+            });
+          }
+        }
+
+        // PRODUCT IMAGES
+
+        if (images !== undefined) {
+          await tx.productImage.deleteMany({
+            where: { productId: id },
+          });
+
+          if (images.length > 0) {
+            await tx.productImage.createMany({
+              data: images.map((image) => ({
+                productId: id,
+                url: image.url,
+                altText: image.altText,
+                displayOrder: image.displayOrder,
+                isPrimary: image.isPrimary,
+              })),
+            });
+          }
+        }
+
+        // MARKETPLACE LINKS
 
         if (marketplaceLinks !== undefined) {
           await tx.productMarketplaceLink.deleteMany({
-            where: {
-              productId: id,
-            },
+            where: { productId: id },
           });
 
           if (marketplaceLinks.length > 0) {
             await tx.productMarketplaceLink.createMany({
-              data: marketplaceLinks.map(
-                (link) => ({
-                  productId: id,
-                  marketplaceId:
-                    link.marketplaceId,
-                  url: link.url,
-                  isActive: link.isActive,
-                  displayOrder:
-                    link.displayOrder,
-                })
-              ),
+              data: marketplaceLinks.map((link) => ({
+                productId: id,
+                marketplaceId: link.marketplaceId,
+                url: link.url,
+                isActive: link.isActive,
+                displayOrder: link.displayOrder,
+              })),
             });
           }
         }
 
         return tx.product.findUnique({
           where: { id },
-
           include: {
             images: true,
             specifications: true,
-
             categories: {
-              include: {
-                category: true,
-              },
+              include: { category: true },
             },
-
             marketplaceLinks: {
-              include: {
-                marketplace: true,
-              },
+              include: { marketplace: true },
             },
           },
         });
       }
     );
 
+    refreshProducts();
+
     return NextResponse.json({
       success: true,
       product: updated,
+      message: 'Product updated successfully.',
     });
-  } catch (error: unknown) {
-    console.error(
-      'Update product error:',
-      error
-    );
-
-    if (
-      error instanceof Error &&
-      'code' in error &&
-      error.code === 'P2025'
-    ) {
-      return NextResponse.json(
-        {
-          error: 'Product not found',
-        },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json(
-      {
-        error: 'Internal server error',
-      },
-      { status: 500 }
-    );
+  } catch (error) {
+    return handleError(error, 'update');
   }
 }
 
@@ -432,20 +375,39 @@ export async function PATCH(
   { params }: Context
 ) {
   try {
+    if (!(await getSession())) return unauthorized();
+
     const { id } = await params;
-    const body = await request.json();
-    const { action } = body;
+    const body = await request.json().catch(() => null);
+
+    const parsed = z
+      .object({
+        action: z.enum([
+          'publish',
+          'unpublish',
+          'sold_out',
+          'archive',
+          'restore',
+        ]),
+      })
+      .safeParse(body);
+
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Invalid product action.',
+        },
+        { status: 400 }
+      );
+    }
 
     let updateData: {
-      status?:
-        | 'ACTIVE'
-        | 'DRAFT'
-        | 'SOLD_OUT'
-        | 'ARCHIVED';
+      status: 'ACTIVE' | 'DRAFT' | 'SOLD_OUT' | 'ARCHIVED';
       publishedAt?: Date;
-    } = {};
+    };
 
-    switch (action) {
+    switch (parsed.data.action) {
       case 'publish':
         updateData = {
           status: 'ACTIVE',
@@ -454,36 +416,20 @@ export async function PATCH(
         break;
 
       case 'unpublish':
-        updateData = {
-          status: 'DRAFT',
-        };
+        updateData = { status: 'DRAFT' };
         break;
 
       case 'sold_out':
-        updateData = {
-          status: 'SOLD_OUT',
-        };
+        updateData = { status: 'SOLD_OUT' };
         break;
 
       case 'archive':
-        updateData = {
-          status: 'ARCHIVED',
-        };
+        updateData = { status: 'ARCHIVED' };
         break;
 
       case 'restore':
-        updateData = {
-          status: 'ACTIVE',
-        };
+        updateData = { status: 'ACTIVE' };
         break;
-
-      default:
-        return NextResponse.json(
-          {
-            error: 'Invalid action',
-          },
-          { status: 400 }
-        );
     }
 
     const product = await prisma.product.update({
@@ -491,100 +437,44 @@ export async function PATCH(
       data: updateData,
     });
 
+    refreshProducts();
+
     return NextResponse.json({
       success: true,
       product,
     });
-  } catch (error: unknown) {
-    console.error(
-      'Patch product error:',
-      error
-    );
-
-    if (
-      error instanceof Error &&
-      'code' in error &&
-      error.code === 'P2025'
-    ) {
-      return NextResponse.json(
-        {
-          error: 'Product not found',
-        },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json(
-      {
-        error: 'Internal server error',
-      },
-      { status: 500 }
-    );
+  } catch (error) {
+    return handleError(error, 'update');
   }
 }
 
-// REMOVE PRODUCT
+// PERMANENT DELETE ONLY
 
 export async function DELETE(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: Context
 ) {
   try {
+    if (!(await getSession())) return unauthorized();
+
     const { id } = await params;
 
-    const { searchParams } = new URL(request.url);
+    // Related DB rows are removed by Prisma's
+    // onDelete: Cascade relations.
 
-    const permanent =
-      searchParams.get('permanent') === 'true';
-
-    if (permanent) {
-      await prisma.product.delete({
-        where: { id },
-      });
-
-      return NextResponse.json({
-        success: true,
-        message:
-          'Product permanently deleted',
-      });
-    }
-
-    const product = await prisma.product.update({
+    await prisma.product.delete({
       where: { id },
-      data: {
-        status: 'ARCHIVED',
-      },
     });
+
+    refreshProducts();
 
     return NextResponse.json({
       success: true,
-      product,
-      message: 'Product archived',
+      deleted: true,
+      deletedProductCount: 1,
+      message: 'Product permanently deleted.',
     });
-  } catch (error: unknown) {
-    console.error(
-      'Delete product error:',
-      error
-    );
-
-    if (
-      error instanceof Error &&
-      'code' in error &&
-      error.code === 'P2025'
-    ) {
-      return NextResponse.json(
-        {
-          error: 'Product not found',
-        },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json(
-      {
-        error: 'Internal server error',
-      },
-      { status: 500 }
-    );
+  } catch (error) {
+    return handleError(error, 'delete');
   }
 }

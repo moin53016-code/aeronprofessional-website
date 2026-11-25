@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { ArrowRight, ImageIcon } from 'lucide-react';
 import { Category } from '@/types';
@@ -9,14 +8,13 @@ interface CategoryGridProps {
 }
 
 /**
- * Responsive category grid.
+ * Category grid with uniform image sizing.
  *
+ * - All category images render inside the same fixed frame
+ * - Future uploads also look visually consistent
  * - Mobile: 2 columns
  * - Tablet: 3 columns
  * - Desktop: 4 columns
- * - Full image visible, no cropping
- * - Automatic center alignment
- * - Original image proportions preserved
  */
 
 export const CategoryGrid: React.FC<CategoryGridProps> = ({
@@ -39,12 +37,9 @@ export const CategoryGrid: React.FC<CategoryGridProps> = ({
       "
       aria-labelledby="shop-by-category-heading"
     >
-      {/* SECTION HEADING */}
-
+      {/* SECTION HEADER */}
       <div className="mb-8 text-center sm:mb-11">
-        <p className="tag">
-          DISCOVER YOUR TOOL
-        </p>
+        <p className="tag">DISCOVER YOUR TOOL</p>
 
         <h2
           id="shop-by-category-heading"
@@ -73,8 +68,7 @@ export const CategoryGrid: React.FC<CategoryGridProps> = ({
         </p>
       </div>
 
-      {/* RESPONSIVE CATEGORY GRID */}
-
+      {/* CATEGORY GRID */}
       <div
         className="
           grid
@@ -93,9 +87,7 @@ export const CategoryGrid: React.FC<CategoryGridProps> = ({
           <button
             key={category.id || category.name}
             type="button"
-            onClick={() =>
-              onSelectCategory(category.name)
-            }
+            onClick={() => onSelectCategory(category.name)}
             className="
               group
               flex
@@ -109,75 +101,66 @@ export const CategoryGrid: React.FC<CategoryGridProps> = ({
             "
             aria-label={`Shop ${category.label}`}
           >
-            {/* CATEGORY IMAGE */}
-
+            {/* UNIFORM IMAGE FRAME */}
             <div
               className="
                 relative
-                flex
-                aspect-[4/4.5]
                 w-full
-                min-w-0
-                items-center
-                justify-center
                 overflow-hidden
-                rounded-sm
                 bg-[#f1eee8]
-                p-2
-                sm:p-4
-                lg:p-5
               "
             >
-              {category.img ? (
-                <img
-                  src={category.img}
-                  alt={category.label}
-                  loading="lazy"
-                  decoding="async"
-                  draggable={false}
-                  className="
-                    block
-                    h-full
-                    w-full
-                    max-h-full
-                    max-w-full
-                    object-contain
-                    object-center
-                  "
-                  style={{
-                    objectFit: 'contain',
-                    objectPosition: 'center',
-                    transform: 'none',
-                  }}
-                />
-              ) : (
-                <div
-                  className="
-                    flex
-                    h-full
-                    w-full
-                    flex-col
-                    items-center
-                    justify-center
-                    gap-2
-                    text-center
-                    text-gray-400
-                  "
-                >
-                  <ImageIcon
-                    size={28}
-                    aria-hidden="true"
+              <div
+                className="
+                  relative
+                  aspect-[4/5]
+                  w-full
+                  overflow-hidden
+                "
+              >
+                {category.img ? (
+                  <img
+                    src={category.img}
+                    alt={category.label}
+                    loading="lazy"
+                    decoding="async"
+                    draggable={false}
+                    className="
+                      absolute
+                      inset-0
+                      h-full
+                      w-full
+                      object-cover
+                      object-center
+                      transition-transform
+                      duration-300
+                      group-hover:scale-[1.02]
+                    "
                   />
-
-                  <span className="text-xs">
-                    No image available
-                  </span>
-                </div>
-              )}
+                ) : (
+                  <div
+                    className="
+                      absolute
+                      inset-0
+                      flex
+                      flex-col
+                      items-center
+                      justify-center
+                      gap-2
+                      text-center
+                      text-gray-400
+                    "
+                  >
+                    <ImageIcon size={28} aria-hidden="true" />
+                    <span className="text-xs">
+                      No image available
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* CATEGORY NAME + ARROW */}
-
+            {/* TITLE ROW */}
             <div
               className="
                 flex
@@ -226,7 +209,6 @@ export const CategoryGrid: React.FC<CategoryGridProps> = ({
       </div>
 
       {/* EMPTY STATE */}
-
       {categories.length === 0 && (
         <div
           className="

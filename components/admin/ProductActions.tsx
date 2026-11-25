@@ -14,27 +14,40 @@ export default function ProductActions({
   productId,
 }: ProductActionsProps) {
   const router = useRouter();
-
   const [loading, setLoading] = useState(false);
 
-  const handleRemove = async () => {
+  const handleDelete = async () => {
     if (loading) return;
 
-    const confirmed = window.confirm(
-      'Remove this product from the website?\n\n' +
-      'The product will be archived and hidden from customers. ' +
-      'Its data will not be permanently deleted.'
+    const first = window.confirm(
+      'DELETE PRODUCT?\n\n' +
+      'This product will be permanently removed from ' +
+      'the website and database.\n\n' +
+      'It will NOT be archived.\n\nContinue?'
     );
 
-    if (!confirmed) return;
+    if (!first) return;
+
+    const second = window.confirm(
+      'FINAL CONFIRMATION\n\n' +
+      'Are you absolutely sure?\n\n' +
+      'All associated product database records ' +
+      'will be deleted.\n\n' +
+      'THIS ACTION CANNOT BE UNDONE.'
+    );
+
+    if (!second) return;
 
     setLoading(true);
 
     try {
       const response = await fetch(
-        `/api/admin/products/${productId}`,
+        `/api/admin/products/${encodeURIComponent(
+          productId
+        )}`,
         {
           method: 'DELETE',
+          cache: 'no-store',
         }
       );
 
@@ -42,20 +55,20 @@ export default function ProductActions({
         .json()
         .catch(() => ({}));
 
-      if (!response.ok) {
+      if (!response.ok || !data.success || !data.deleted) {
         throw new Error(
-          data.error || 'Failed to remove product.'
+          data.error ||
+          'Product was not permanently deleted.'
         );
       }
 
       router.refresh();
     } catch (error) {
-      const message =
+      window.alert(
         error instanceof Error
           ? error.message
-          : 'Failed to remove product.';
-
-      window.alert(message);
+          : 'Failed to delete product.'
+      );
     } finally {
       setLoading(false);
     }
@@ -64,33 +77,14 @@ export default function ProductActions({
   return (
     <button
       type="button"
-      onClick={handleRemove}
+      onClick={handleDelete}
       disabled={loading}
-      aria-label="Remove product"
-      title="Remove product"
-      className="
-        inline-flex
-        items-center
-        justify-center
-        rounded-md
-        p-2
-        text-red-600
-        transition-colors
-        hover:bg-red-50
-        hover:text-red-700
-        focus-visible:outline
-        focus-visible:outline-2
-        focus-visible:outline-offset-2
-        focus-visible:outline-red-500
-        disabled:cursor-not-allowed
-        disabled:opacity-50
-      "
+      title="Permanently delete product"
+      aria-label="Permanently delete product"
+      className="inline-flex items-center justify-center rounded-md p-2 text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
     >
       {loading ? (
-        <Loader2
-          size={17}
-          className="animate-spin"
-        />
+        <Loader2 size={17} className="animate-spin" />
       ) : (
         <Trash2 size={17} />
       )}
