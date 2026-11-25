@@ -7,7 +7,7 @@ import './globals.css';
 export const metadata: Metadata = {
   title: {
     default:
-      'AERON PROFESSIONAL | Salon-Grade Styling Tools',
+      'AERON PROFESSIONAL',
 
     template:
       '%s | AERON PROFESSIONAL',
