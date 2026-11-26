@@ -20,30 +20,68 @@ import {
   AUDIT_ENTITIES,
 } from '@/lib/audit-log';
 
+import {
+  readJsonBody,
+  REQUEST_LIMITS,
+} from '@/lib/request-validation';
+
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-// IMAGE URL VALIDATION
+// DATABASE INTEGER LIMIT
 
-const imageUrlSchema = z.string().refine(
-  (value) => {
-    if (/^\/uploads\/[a-zA-Z0-9._-]+$/.test(value)) {
-      return true;
-    }
+const MAX_INT = 2147483647;
 
-    try {
-      const url = new URL(value);
+// URL VALIDATION
 
-      return (
+function isValidWebUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+
+    return (
+      (
         url.protocol === 'https:' ||
         url.protocol === 'http:'
-      );
-    } catch {
-      return false;
-    }
-  },
-  'Use an HTTP(S) image URL or a valid /uploads/ path.'
-);
+      ) &&
+      Boolean(url.hostname) &&
+      !url.username &&
+      !url.password
+    );
+
+  } catch {
+    return false;
+  }
+}
+
+// IMAGE URL VALIDATION
+
+const imageUrlSchema = z
+  .string()
+  .trim()
+  .max(2048)
+  .refine(
+    (value) => {
+      if (
+        /^\/(?:uploads|images)\/[a-zA-Z0-9._-]+$/.test(value)
+      ) {
+        return true;
+      }
+
+      return isValidWebUrl(value);
+    },
+    'Use a valid HTTP(S) image URL or local image path.'
+  );
+
+// MARKETPLACE URL VALIDATION
+
+const marketplaceUrlSchema = z
+  .string()
+  .trim()
+  .max(2048)
+  .refine(
+    isValidWebUrl,
+    'Invalid marketplace URL.'
+  );
 
 // PRODUCT STATUS
 
@@ -54,82 +92,156 @@ const statusSchema = z.enum([
   'ARCHIVED',
 ]);
 
+// COMMON FIELD VALIDATION
+
+const idSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(/^[a-zA-Z0-9_-]+$/);
+
+const priceSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(MAX_INT);
+
+const displayOrderSchema = z
+  .number()
+  .int()
+  .min(-MAX_INT)
+  .max(MAX_INT);
+
 // PRODUCT VALIDATION
 
 const createProductSchema = z.object({
-  name: z.string().trim().min(1),
-  slug: z.string().trim().min(1),
-  sku: z.string().nullable().optional(),
-  shortDescription: z.string().nullable().optional(),
-  description: z.string().default(''),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(300),
 
-  priceInPaise: z.number().int().nonnegative(),
+  slug: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .regex(
+      /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+      'Invalid product slug.'
+    ),
 
-  originalPriceInPaise: z
-    .number()
-    .int()
-    .nonnegative()
+  sku: z
+    .string()
+    .trim()
+    .max(100)
     .nullable()
     .optional(),
 
-  currency: z.string().default('INR'),
+  shortDescription: z
+    .string()
+    .max(5000)
+    .nullable()
+    .optional(),
+
+  description: z
+    .string()
+    .max(50000)
+    .default(''),
+
+  priceInPaise: priceSchema,
+
+  originalPriceInPaise: priceSchema
+    .nullable()
+    .optional(),
+
+  currency: z
+    .string()
+    .regex(/^[A-Z]{3}$/)
+    .default('INR'),
+
   status: statusSchema.default('DRAFT'),
+
   isFeatured: z.boolean().default(false),
+
   isNew: z.boolean().default(false),
-  displayOrder: z.number().int().default(0),
-  badgeText: z.string().nullable().optional(),
-  primaryImageUrl: imageUrlSchema.nullable().optional(),
+
+  displayOrder: displayOrderSchema.default(0),
+
+  badgeText: z
+    .string()
+    .max(100)
+    .nullable()
+    .optional(),
+
+  primaryImageUrl: imageUrlSchema
+    .nullable()
+    .optional(),
 
   categoryIds: z
-    .array(z.string().min(1))
+    .array(idSchema)
+    .max(100)
     .default([]),
 
   specifications: z
     .array(
       z.object({
-        label: z.string().trim().min(1),
-        value: z.string().nullable().optional(),
-        displayOrder: z.number().int().default(0),
+        label: z
+          .string()
+          .trim()
+          .min(1)
+          .max(200),
+
+        value: z
+          .string()
+          .max(2000)
+          .nullable()
+          .optional(),
+
+        displayOrder:
+          displayOrderSchema.default(0),
       })
     )
+    .max(100)
     .default([]),
 
   images: z
     .array(
       z.object({
         url: imageUrlSchema,
-        altText: z.string().nullable().optional(),
-        displayOrder: z.number().int().default(0),
-        isPrimary: z.boolean().default(false),
+
+        altText: z
+          .string()
+          .max(500)
+          .nullable()
+          .optional(),
+
+        displayOrder:
+          displayOrderSchema.default(0),
+
+        isPrimary:
+          z.boolean().default(false),
       })
     )
+    .max(50)
     .default([]),
 
   marketplaceLinks: z
     .array(
       z.object({
-        marketplaceId: z.string().min(1),
+        marketplaceId: idSchema,
 
-        url: z.string().url().refine(
-          (value) => {
-            try {
-              const url = new URL(value);
+        url: marketplaceUrlSchema,
 
-              return (
-                url.protocol === 'https:' ||
-                url.protocol === 'http:'
-              );
-            } catch {
-              return false;
-            }
-          },
-          'Invalid marketplace URL'
-        ),
+        isActive:
+          z.boolean().default(true),
 
-        isActive: z.boolean().default(true),
-        displayOrder: z.number().int().default(0),
+        displayOrder:
+          displayOrderSchema.default(0),
       })
     )
+    .max(50)
     .default([]),
 });
 
@@ -228,9 +340,15 @@ export async function GET(request: NextRequest) {
     // CATEGORY FILTER
 
     if (categoryId) {
+      const parsedId = idSchema.safeParse(categoryId);
+
+      if (!parsedId.success) {
+        return badInput('Invalid category identifier.');
+      }
+
       where.categories = {
         some: {
-          categoryId,
+          categoryId: parsedId.data,
         },
       };
     }
@@ -255,6 +373,7 @@ export async function GET(request: NextRequest) {
         products,
       })
     );
+
   } catch (error) {
     return apiError(error, 'Product');
   }
@@ -264,8 +383,6 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    // VERIFY ADMIN AND PRODUCT CREATION PERMISSION
-
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.PRODUCT_CREATE,
@@ -277,18 +394,27 @@ export async function POST(request: NextRequest) {
 
     const admin = authorization.user;
 
-    // VALIDATE REQUEST BODY
+    // CENTRALIZED REQUEST BODY PROTECTION
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    const body = await readJsonBody(
+      request,
+      REQUEST_LIMITS.PRODUCT
+    );
 
-    const parsed = createProductSchema.safeParse(body);
+    if (!body.ok) {
+      return body.response;
+    }
+
+    // VALIDATE PRODUCT DATA
+
+    const parsed = createProductSchema.safeParse(
+      body.data
+    );
 
     if (!parsed.success) {
       return badInput(
         'Invalid product data.',
-        parsed.error.flatten()
+        z.flattenError(parsed.error)
       );
     }
 
@@ -300,7 +426,7 @@ export async function POST(request: NextRequest) {
       ...productData
     } = parsed.data;
 
-    // PRICE VALIDATION
+    // VALIDATE PRODUCT PRICES
 
     if (
       productData.originalPriceInPaise != null &&
@@ -333,6 +459,7 @@ export async function POST(request: NextRequest) {
 
     const product = await prisma.$transaction(
       async (tx) => {
+
         const createdProduct = await tx.product.create({
           data: {
             ...productData,
@@ -398,8 +525,6 @@ export async function POST(request: NextRequest) {
       }
     );
 
-    // REFRESH WEBSITE AND ADMIN PANEL
-
     refreshAdmin('/admin/products');
 
     return secureAdminResponse(
@@ -414,6 +539,7 @@ export async function POST(request: NextRequest) {
         }
       )
     );
+
   } catch (error) {
     return apiError(error, 'Product');
   }

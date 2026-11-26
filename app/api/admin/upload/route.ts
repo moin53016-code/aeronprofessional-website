@@ -19,6 +19,11 @@ import {
   AUDIT_ENTITIES,
 } from '@/lib/audit-log';
 
+import {
+  readMultipartBody,
+  REQUEST_LIMITS,
+} from '@/lib/request-validation';
+
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -35,6 +40,25 @@ const extensions = new Map<string, string>([
   ['image/webp', 'webp'],
   ['image/gif', 'gif'],
 ]);
+
+// SECURE UPLOAD ERROR RESPONSE
+
+function uploadError(
+  message: string,
+  status: number
+) {
+  return secureAdminResponse(
+    NextResponse.json(
+      {
+        success: false,
+        error: message,
+      },
+      {
+        status,
+      }
+    )
+  );
+}
 
 // VERIFY IMAGE FILE SIGNATURE
 
@@ -81,6 +105,7 @@ function matchesImageType(
   // GIF SIGNATURE
 
   if (type === 'image/gif') {
+
     const signature =
       buffer.toString('ascii', 0, 6);
 
@@ -114,40 +139,19 @@ export async function POST(request: NextRequest) {
 
     const admin = authorization.user;
 
-    // VERIFY REQUEST CONTENT TYPE
+    // CENTRALIZED MULTIPART REQUEST PROTECTION
+    // MAXIMUM TOTAL REQUEST SIZE: 11 MB
 
-    const contentType = request.headers
-      .get('content-type')
-      ?.split(';')[0]
-      .trim()
-      .toLowerCase();
+    const body = await readMultipartBody(
+      request,
+      REQUEST_LIMITS.UPLOAD
+    );
 
-    if (contentType !== 'multipart/form-data') {
-      return secureAdminResponse(
-        NextResponse.json(
-          {
-            success: false,
-            error:
-              'Image uploads must use multipart/form-data.',
-          },
-          {
-            status: 415,
-          }
-        )
-      );
+    if (!body.ok) {
+      return body.response;
     }
 
-    // PARSE MULTIPART FORM DATA
-
-    const formData = await request
-      .formData()
-      .catch(() => null);
-
-    if (!formData) {
-      return badInput(
-        'Invalid image upload request.'
-      );
-    }
+    const formData = body.data;
 
     // REQUIRE EXACTLY ONE IMAGE FILE
 
@@ -157,6 +161,16 @@ export async function POST(request: NextRequest) {
       return badInput(
         'Please select exactly one image file.'
       );
+    }
+
+    // REJECT UNEXPECTED FORM FIELDS
+
+    for (const key of formData.keys()) {
+      if (key !== 'file') {
+        return badInput(
+          'Unexpected upload form field.'
+        );
+      }
     }
 
     const file = files[0];
@@ -172,17 +186,9 @@ export async function POST(request: NextRequest) {
     const extension = extensions.get(file.type);
 
     if (!extension) {
-      return secureAdminResponse(
-        NextResponse.json(
-          {
-            success: false,
-            error:
-              'Only JPG, PNG, WebP and GIF are supported.',
-          },
-          {
-            status: 415,
-          }
-        )
+      return uploadError(
+        'Only JPG, PNG, WebP and GIF are supported.',
+        415
       );
     }
 
@@ -197,17 +203,9 @@ export async function POST(request: NextRequest) {
     // ENFORCE MAXIMUM IMAGE SIZE
 
     if (file.size > MAX_SIZE) {
-      return secureAdminResponse(
-        NextResponse.json(
-          {
-            success: false,
-            error:
-              'Image must be no larger than 10 MB.',
-          },
-          {
-            status: 413,
-          }
-        )
+      return uploadError(
+        'Image must be no larger than 10 MB.',
+        413
       );
     }
 
@@ -229,17 +227,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (buffer.length > MAX_SIZE) {
-      return secureAdminResponse(
-        NextResponse.json(
-          {
-            success: false,
-            error:
-              'Image must be no larger than 10 MB.',
-          },
-          {
-            status: 413,
-          }
-        )
+      return uploadError(
+        'Image must be no larger than 10 MB.',
+        413
       );
     }
 
@@ -253,9 +243,11 @@ export async function POST(request: NextRequest) {
 
     // GENERATE SECURE UNIQUE MEDIA IDENTIFIER
 
-    const mediaId = `${Date.now()}-${randomUUID()}`;
+    const mediaId =
+      `${Date.now()}-${randomUUID()}`;
 
-    const filename = `${mediaId}.${extension}`;
+    const filename =
+      `${mediaId}.${extension}`;
 
     // LOCAL UPLOAD DIRECTORY
 
@@ -269,7 +261,7 @@ export async function POST(request: NextRequest) {
       recursive: true,
     });
 
-    // SAVE IMAGE WITHOUT OVERWRITING EXISTING FILES
+    // SAVE WITHOUT OVERWRITING EXISTING FILES
 
     await writeFile(
       join(uploadDirectory, filename),
@@ -280,15 +272,18 @@ export async function POST(request: NextRequest) {
     );
 
     // RECORD VERIFIED ADMIN UPLOAD ACTIVITY
-    // DO NOT STORE ORIGINAL USER FILENAMES,
-    // FILE CONTENTS OR ABSOLUTE SERVER PATHS.
 
     await recordAdminActionSafely(
       admin,
       {
-        action: AUDIT_ACTIONS.MEDIA_UPLOADED,
-        entityType: AUDIT_ENTITIES.MEDIA,
-        entityId: mediaId,
+        action:
+          AUDIT_ACTIONS.MEDIA_UPLOADED,
+
+        entityType:
+          AUDIT_ENTITIES.MEDIA,
+
+        entityId:
+          mediaId,
       }
     );
 

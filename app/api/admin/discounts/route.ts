@@ -19,34 +19,72 @@ import {
   AUDIT_ENTITIES,
 } from '@/lib/audit-log';
 
+import {
+  readJsonBody,
+  REQUEST_LIMITS,
+} from '@/lib/request-validation';
+
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+
+// PRODUCT ID VALIDATION
+
+const idSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[a-zA-Z0-9_-]+$/);
+
+// CAMPAIGN DATE VALIDATION
+
+const dateSchema = z
+  .string()
+  .max(64)
+  .datetime({ offset: true })
+  .refine(
+    (value) => Number.isFinite(Date.parse(value)),
+    'Invalid campaign date.'
+  );
 
 // DISCOUNT CAMPAIGN VALIDATION
 
 const createDiscountSchema = z.object({
-  name: z.string().trim().min(1).max(200),
 
-  description: z.string().trim().nullable().optional(),
-
-  discountLabel: z.string().trim().nullable().optional(),
-
-  isActive: z.boolean().default(true),
-
-  startsAt: z
+  name: z
     .string()
-    .datetime({ offset: true })
+    .trim()
+    .min(1)
+    .max(200),
+
+  description: z
+    .string()
+    .trim()
+    .max(5000)
     .nullable()
     .optional(),
 
-  endsAt: z
+  discountLabel: z
     .string()
-    .datetime({ offset: true })
+    .trim()
+    .max(150)
+    .nullable()
+    .optional(),
+
+  isActive: z
+    .boolean()
+    .default(true),
+
+  startsAt: dateSchema
+    .nullable()
+    .optional(),
+
+  endsAt: dateSchema
     .nullable()
     .optional(),
 
   productIds: z
-    .array(z.string().min(1))
+    .array(idSchema)
+    .max(1000)
     .default([]),
 });
 
@@ -54,6 +92,7 @@ const createDiscountSchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
+
     const denied = await adminDenied({
       request,
       permission: PERMISSIONS.DISCOUNT_VIEW,
@@ -105,7 +144,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
 
-    // VERIFY ADMIN AND DISCOUNT MANAGEMENT PERMISSION
+    // VERIFY ADMIN PERMISSION
 
     const authorization = await authorizeAdmin({
       request,
@@ -118,13 +157,22 @@ export async function POST(request: NextRequest) {
 
     const admin = authorization.user;
 
-    // VALIDATE REQUEST BODY
+    // CENTRALIZED REQUEST BODY PROTECTION
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    const body = await readJsonBody(
+      request,
+      REQUEST_LIMITS.JSON
+    );
 
-    const parsed = createDiscountSchema.safeParse(body);
+    if (!body.ok) {
+      return body.response;
+    }
+
+    // VALIDATE CAMPAIGN INPUT
+
+    const parsed = createDiscountSchema.safeParse(
+      body.data
+    );
 
     if (!parsed.success) {
       return badInput(
@@ -174,6 +222,7 @@ export async function POST(request: NextRequest) {
         // VERIFY SELECTED PRODUCTS EXIST
 
         if (uniqueProductIds.length > 0) {
+
           const existingProducts = await tx.product.count({
             where: {
               id: {
@@ -229,7 +278,9 @@ export async function POST(request: NextRequest) {
           admin,
           {
             action: AUDIT_ACTIONS.DISCOUNT_CREATED,
+
             entityType: AUDIT_ENTITIES.DISCOUNT,
+
             entityId: discount.id,
           },
           tx

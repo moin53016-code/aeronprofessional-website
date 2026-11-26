@@ -19,42 +19,80 @@ import {
   AUDIT_ENTITIES,
 } from '@/lib/audit-log';
 
+import {
+  readJsonBody,
+  REQUEST_LIMITS,
+} from '@/lib/request-validation';
+
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 // IMAGE URL VALIDATION
 
-const imageUrlSchema = z.string().trim().refine(
-  (value) => {
-    if (
-      /^\/(?:uploads|images)\/[a-zA-Z0-9._-]+$/.test(value)
-    ) {
-      return true;
-    }
+const imageUrlSchema = z
+  .string()
+  .trim()
+  .max(2048)
+  .refine(
+    (value) => {
+      if (
+        /^\/(?:uploads|images)\/[a-zA-Z0-9._-]+$/.test(value)
+      ) {
+        return true;
+      }
 
-    try {
-      const url = new URL(value);
+      try {
+        const url = new URL(value);
 
-      return (
-        url.protocol === 'https:' ||
-        url.protocol === 'http:'
-      );
+        return (
+          (
+            url.protocol === 'https:' ||
+            url.protocol === 'http:'
+          ) &&
+          Boolean(url.hostname) &&
+          !url.username &&
+          !url.password
+        );
 
-    } catch {
-      return false;
-    }
-  },
-  'Enter a valid image URL or local image path.'
-);
+      } catch {
+        return false;
+      }
+    },
+    'Enter a valid image URL or local image path.'
+  );
+
+// DATE VALIDATION
+
+const dateSchema = z
+  .string()
+  .max(64)
+  .datetime({ offset: true })
+  .refine(
+    (value) => Number.isFinite(Date.parse(value)),
+    'Invalid banner date.'
+  );
 
 // BANNER VALIDATION
 
 const createBannerSchema = z.object({
-  eyebrow: z.string().trim().min(1).max(200),
 
-  title: z.string().trim().min(1).max(500),
+  eyebrow: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200),
 
-  description: z.string().trim().min(1).max(5000),
+  title: z
+    .string()
+    .trim()
+    .min(1)
+    .max(500),
+
+  description: z
+    .string()
+    .trim()
+    .min(1)
+    .max(5000),
 
   imageUrl: imageUrlSchema,
 
@@ -75,19 +113,22 @@ const createBannerSchema = z.object({
     .max(200)
     .default('Shop All'),
 
-  displayOrder: z.number().int().default(0),
+  displayOrder: z
+    .number()
+    .int()
+    .min(-2147483648)
+    .max(2147483647)
+    .default(0),
 
-  isActive: z.boolean().default(true),
+  isActive: z
+    .boolean()
+    .default(true),
 
-  startsAt: z
-    .string()
-    .datetime({ offset: true })
+  startsAt: dateSchema
     .nullable()
     .optional(),
 
-  endsAt: z
-    .string()
-    .datetime({ offset: true })
+  endsAt: dateSchema
     .nullable()
     .optional(),
 });
@@ -96,6 +137,7 @@ const createBannerSchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
+
     const denied = await adminDenied({
       request,
       permission: PERMISSIONS.BANNER_VIEW,
@@ -133,7 +175,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
 
-    // VERIFY ADMIN AND BANNER MANAGEMENT PERMISSION
+    // VERIFY ADMIN PERMISSION
 
     const authorization = await authorizeAdmin({
       request,
@@ -146,13 +188,22 @@ export async function POST(request: NextRequest) {
 
     const admin = authorization.user;
 
-    // VALIDATE REQUEST BODY
+    // CENTRALIZED REQUEST BODY PROTECTION
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    const body = await readJsonBody(
+      request,
+      REQUEST_LIMITS.JSON
+    );
 
-    const parsed = createBannerSchema.safeParse(body);
+    if (!body.ok) {
+      return body.response;
+    }
+
+    // VALIDATE BANNER INPUT
+
+    const parsed = createBannerSchema.safeParse(
+      body.data
+    );
 
     if (!parsed.success) {
       return badInput(
@@ -215,7 +266,9 @@ export async function POST(request: NextRequest) {
           admin,
           {
             action: AUDIT_ACTIONS.BANNER_CREATED,
+
             entityType: AUDIT_ENTITIES.BANNER,
+
             entityId: createdBanner.id,
           },
           tx

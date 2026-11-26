@@ -19,12 +19,18 @@ import {
   AUDIT_ENTITIES,
 } from '@/lib/audit-log';
 
+import {
+  readJsonBody,
+  REQUEST_LIMITS,
+} from '@/lib/request-validation';
+
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 // FAQ VALIDATION
 
 const createFaqSchema = z.object({
+
   question: z
     .string()
     .trim()
@@ -37,15 +43,23 @@ const createFaqSchema = z.object({
     .min(1, 'Answer is required')
     .max(10000),
 
-  displayOrder: z.number().int().default(0),
+  displayOrder: z
+    .number()
+    .int()
+    .min(-2147483648)
+    .max(2147483647)
+    .default(0),
 
-  isActive: z.boolean().default(true),
+  isActive: z
+    .boolean()
+    .default(true),
 });
 
 // GET ALL FAQS
 
 export async function GET(request: NextRequest) {
   try {
+
     const denied = await adminDenied({
       request,
       permission: PERMISSIONS.FAQ_VIEW,
@@ -83,7 +97,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
 
-    // VERIFY ADMIN AND FAQ MANAGEMENT PERMISSION
+    // VERIFY ADMIN PERMISSION
 
     const authorization = await authorizeAdmin({
       request,
@@ -96,13 +110,22 @@ export async function POST(request: NextRequest) {
 
     const admin = authorization.user;
 
-    // VALIDATE REQUEST BODY
+    // CENTRALIZED REQUEST BODY PROTECTION
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    const body = await readJsonBody(
+      request,
+      REQUEST_LIMITS.JSON
+    );
 
-    const parsed = createFaqSchema.safeParse(body);
+    if (!body.ok) {
+      return body.response;
+    }
+
+    // VALIDATE FAQ INPUT
+
+    const parsed = createFaqSchema.safeParse(
+      body.data
+    );
 
     if (!parsed.success) {
       return badInput(
@@ -134,7 +157,9 @@ export async function POST(request: NextRequest) {
           admin,
           {
             action: AUDIT_ACTIONS.FAQ_CREATED,
+
             entityType: AUDIT_ENTITIES.FAQ,
+
             entityId: createdFaq.id,
           },
           tx
@@ -152,7 +177,9 @@ export async function POST(request: NextRequest) {
       NextResponse.json(
         {
           success: true,
+
           faq,
+
           message: 'FAQ created successfully.',
         },
         {

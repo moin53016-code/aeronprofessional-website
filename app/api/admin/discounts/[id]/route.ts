@@ -19,6 +19,11 @@ import {
   AUDIT_ENTITIES,
 } from '@/lib/audit-log';
 
+import {
+  readJsonBody,
+  REQUEST_LIMITS,
+} from '@/lib/request-validation';
+
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
@@ -26,31 +31,65 @@ type Context = {
   params: Promise<{ id: string }>;
 };
 
+// ID VALIDATION
+
+const idSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[a-zA-Z0-9_-]+$/);
+
+// DATE VALIDATION
+
+const dateSchema = z
+  .string()
+  .max(64)
+  .datetime({ offset: true })
+  .refine(
+    (value) => Number.isFinite(Date.parse(value)),
+    'Invalid campaign date.'
+  );
+
 // DISCOUNT UPDATE VALIDATION
 
 const updateSchema = z.object({
-  name: z.string().trim().min(1).max(200).optional(),
 
-  description: z.string().nullable().optional(),
-
-  discountLabel: z.string().nullable().optional(),
-
-  isActive: z.boolean().optional(),
-
-  startsAt: z
+  name: z
     .string()
-    .datetime({ offset: true })
+    .trim()
+    .min(1)
+    .max(200)
+    .optional(),
+
+  description: z
+    .string()
+    .trim()
+    .max(5000)
     .nullable()
     .optional(),
 
-  endsAt: z
+  discountLabel: z
     .string()
-    .datetime({ offset: true })
+    .trim()
+    .max(150)
+    .nullable()
+    .optional(),
+
+  isActive: z
+    .boolean()
+    .optional(),
+
+  startsAt: dateSchema
+    .nullable()
+    .optional(),
+
+  endsAt: dateSchema
     .nullable()
     .optional(),
 
   productIds: z
-    .array(z.string().min(1))
+    .array(idSchema)
+    .max(1000)
     .optional(),
 });
 
@@ -89,6 +128,7 @@ function discountNotFound() {
 // CENTRALIZED DISCOUNT ERROR HANDLING
 
 function handleDiscountError(error: unknown) {
+
   if (error instanceof Error) {
 
     if (error.message === 'CAMPAIGN_NOT_FOUND') {
@@ -118,6 +158,7 @@ export async function GET(
   { params }: Context
 ) {
   try {
+
     const denied = await adminDenied({
       request,
       permission: PERMISSIONS.DISCOUNT_VIEW,
@@ -128,6 +169,10 @@ export async function GET(
     }
 
     const { id } = await params;
+
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid campaign identifier.');
+    }
 
     const discount = await prisma.discountCampaign.findUnique({
       where: { id },
@@ -158,6 +203,7 @@ export async function PUT(
   { params }: Context
 ) {
   try {
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.DISCOUNT_MANAGE,
@@ -170,13 +216,24 @@ export async function PUT(
     const admin = authorization.user;
     const { id } = await params;
 
-    // VALIDATE REQUEST BODY
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid campaign identifier.');
+    }
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    // CENTRALIZED REQUEST BODY PROTECTION
 
-    const parsed = updateSchema.safeParse(body);
+    const body = await readJsonBody(
+      request,
+      REQUEST_LIMITS.JSON
+    );
+
+    if (!body.ok) {
+      return body.response;
+    }
+
+    const parsed = updateSchema.safeParse(
+      body.data
+    );
 
     if (!parsed.success) {
       return badInput(
@@ -184,6 +241,8 @@ export async function PUT(
         z.flattenError(parsed.error)
       );
     }
+
+    // REJECT EMPTY UPDATES
 
     if (Object.keys(parsed.data).length === 0) {
       return badInput(
@@ -210,11 +269,10 @@ export async function PUT(
     const discount = await prisma.$transaction(
       async (tx) => {
 
-        // FETCH EXISTING CAMPAIGN
-
-        const existing = await tx.discountCampaign.findUnique({
-          where: { id },
-        });
+        const existing =
+          await tx.discountCampaign.findUnique({
+            where: { id },
+          });
 
         if (!existing) {
           throw new Error('CAMPAIGN_NOT_FOUND');
@@ -236,7 +294,7 @@ export async function PUT(
               ? new Date(endsAt)
               : null;
 
-        // VALIDATE CAMPAIGN SCHEDULE
+        // VALIDATE EFFECTIVE DATE RANGE
 
         if (
           startDate &&
@@ -252,6 +310,7 @@ export async function PUT(
           uniqueProductIds !== undefined &&
           uniqueProductIds.length > 0
         ) {
+
           const existingProducts = await tx.product.count({
             where: {
               id: {
@@ -301,6 +360,7 @@ export async function PUT(
           // CREATE UPDATED ASSIGNMENTS
 
           if (uniqueProductIds.length > 0) {
+
             await tx.discountProduct.createMany({
               data: uniqueProductIds.map(
                 (productId) => ({
@@ -318,7 +378,9 @@ export async function PUT(
           admin,
           {
             action: AUDIT_ACTIONS.DISCOUNT_UPDATED,
+
             entityType: AUDIT_ENTITIES.DISCOUNT,
+
             entityId: id,
           },
           tx
@@ -329,11 +391,15 @@ export async function PUT(
         if (
           existing.isActive !== updatedCampaign.isActive
         ) {
+
           await recordAdminAction(
             admin,
             {
-              action: AUDIT_ACTIONS.DISCOUNT_STATUS_CHANGED,
+              action:
+                AUDIT_ACTIONS.DISCOUNT_STATUS_CHANGED,
+
               entityType: AUDIT_ENTITIES.DISCOUNT,
+
               entityId: id,
             },
             tx
@@ -354,8 +420,11 @@ export async function PUT(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         discount,
-        message: 'Discount campaign updated successfully.',
+
+        message:
+          'Discount campaign updated successfully.',
       })
     );
 
@@ -364,7 +433,7 @@ export async function PUT(
   }
 }
 
-// ACTIVATE / DEACTIVATE DISCOUNT CAMPAIGN
+// ACTIVATE OR DEACTIVATE DISCOUNT CAMPAIGN
 // OWNER AND ADMIN ONLY
 
 export async function PATCH(
@@ -372,6 +441,7 @@ export async function PATCH(
   { params }: Context
 ) {
   try {
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.DISCOUNT_MANAGE,
@@ -384,11 +454,24 @@ export async function PATCH(
     const admin = authorization.user;
     const { id } = await params;
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid campaign identifier.');
+    }
 
-    const parsed = statusSchema.safeParse(body);
+    // MAXIMUM STATUS REQUEST SIZE: 4 KB
+
+    const body = await readJsonBody(
+      request,
+      4 * 1024
+    );
+
+    if (!body.ok) {
+      return body.response;
+    }
+
+    const parsed = statusSchema.safeParse(
+      body.data
+    );
 
     if (!parsed.success) {
       return badInput('Invalid campaign status.');
@@ -399,13 +482,14 @@ export async function PATCH(
     const discount = await prisma.$transaction(
       async (tx) => {
 
-        const existing = await tx.discountCampaign.findUnique({
-          where: { id },
+        const existing =
+          await tx.discountCampaign.findUnique({
+            where: { id },
 
-          select: {
-            isActive: true,
-          },
-        });
+            select: {
+              isActive: true,
+            },
+          });
 
         if (!existing) {
           throw new Error('CAMPAIGN_NOT_FOUND');
@@ -427,11 +511,15 @@ export async function PATCH(
         if (
           existing.isActive !== updatedCampaign.isActive
         ) {
+
           await recordAdminAction(
             admin,
             {
-              action: AUDIT_ACTIONS.DISCOUNT_STATUS_CHANGED,
+              action:
+                AUDIT_ACTIONS.DISCOUNT_STATUS_CHANGED,
+
               entityType: AUDIT_ENTITIES.DISCOUNT,
+
               entityId: id,
             },
             tx
@@ -447,7 +535,9 @@ export async function PATCH(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         discount,
+
         message:
           'Discount campaign status updated successfully.',
       })
@@ -466,6 +556,7 @@ export async function DELETE(
   { params }: Context
 ) {
   try {
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.DISCOUNT_MANAGE,
@@ -477,6 +568,10 @@ export async function DELETE(
 
     const admin = authorization.user;
     const { id } = await params;
+
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid campaign identifier.');
+    }
 
     // ATOMIC CAMPAIGN DELETION AND AUDIT LOGGING
 
@@ -495,7 +590,9 @@ export async function DELETE(
         admin,
         {
           action: AUDIT_ACTIONS.DISCOUNT_DELETED,
+
           entityType: AUDIT_ENTITIES.DISCOUNT,
+
           entityId: id,
         },
         tx
@@ -508,7 +605,9 @@ export async function DELETE(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         deleted: true,
+
         message:
           'Discount campaign deleted. Products preserved.',
       })

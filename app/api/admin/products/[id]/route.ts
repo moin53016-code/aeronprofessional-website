@@ -19,6 +19,11 @@ import {
   AUDIT_ENTITIES,
 } from '@/lib/audit-log';
 
+import {
+  readJsonBody,
+  REQUEST_LIMITS,
+} from '@/lib/request-validation';
+
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
@@ -26,54 +31,127 @@ type Context = {
   params: Promise<{ id: string }>;
 };
 
-// IMAGE URL VALIDATION
+// DATABASE INTEGER LIMIT
 
-const imageUrlSchema = z.string().refine(
-  (value) => {
-    if (/^\/uploads\/[a-zA-Z0-9._-]+$/.test(value)) {
-      return true;
-    }
+const MAX_INT = 2147483647;
 
-    try {
-      const url = new URL(value);
+// COMMON FIELD VALIDATION
 
-      return (
+const idSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[a-zA-Z0-9_-]+$/);
+
+const priceSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(MAX_INT);
+
+const displayOrderSchema = z
+  .number()
+  .int()
+  .min(-MAX_INT)
+  .max(MAX_INT);
+
+// URL VALIDATION
+
+function isValidWebUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+
+    return (
+      (
         url.protocol === 'https:' ||
         url.protocol === 'http:'
-      );
-    } catch {
-      return false;
-    }
-  },
-  {
-    message:
-      'Image must be an HTTP(S) URL or a valid /uploads/ path.',
+      ) &&
+      Boolean(url.hostname) &&
+      !url.username &&
+      !url.password
+    );
+
+  } catch {
+    return false;
   }
-);
+}
+
+const imageUrlSchema = z
+  .string()
+  .trim()
+  .max(2048)
+  .refine(
+    (value) => {
+      if (
+        /^\/(?:uploads|images)\/[a-zA-Z0-9._-]+$/.test(value)
+      ) {
+        return true;
+      }
+
+      return isValidWebUrl(value);
+    },
+    'Use a valid HTTP(S) image URL or local image path.'
+  );
+
+const marketplaceUrlSchema = z
+  .string()
+  .trim()
+  .max(2048)
+  .refine(
+    isValidWebUrl,
+    'Invalid marketplace URL.'
+  );
 
 // PRODUCT UPDATE VALIDATION
 
 const updateProductSchema = z.object({
-  name: z.string().min(1).optional(),
-  slug: z.string().min(1).optional(),
-  sku: z.string().nullable().optional(),
-  shortDescription: z.string().nullable().optional(),
-  description: z.string().optional(),
 
-  priceInPaise: z
-    .number()
-    .int()
-    .nonnegative()
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(300)
     .optional(),
 
-  originalPriceInPaise: z
-    .number()
-    .int()
-    .nonnegative()
+  slug: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .regex(
+      /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+      'Invalid product slug.'
+    )
+    .optional(),
+
+  sku: z
+    .string()
+    .trim()
+    .max(100)
     .nullable()
     .optional(),
 
-  currency: z.string().optional(),
+  shortDescription: z
+    .string()
+    .max(5000)
+    .nullable()
+    .optional(),
+
+  description: z
+    .string()
+    .max(50000)
+    .optional(),
+
+  priceInPaise:
+    priceSchema.optional(),
+
+  originalPriceInPaise:
+    priceSchema.nullable().optional(),
+
+  currency: z
+    .string()
+    .regex(/^[A-Z]{3}$/)
+    .optional(),
 
   status: z
     .enum([
@@ -85,59 +163,84 @@ const updateProductSchema = z.object({
     .optional(),
 
   isFeatured: z.boolean().optional(),
-  isNew: z.boolean().optional(),
-  displayOrder: z.number().int().optional(),
-  badgeText: z.string().nullable().optional(),
-  primaryImageUrl: imageUrlSchema.nullable().optional(),
 
-  categoryIds: z.array(z.string()).optional(),
+  isNew: z.boolean().optional(),
+
+  displayOrder:
+    displayOrderSchema.optional(),
+
+  badgeText: z
+    .string()
+    .max(100)
+    .nullable()
+    .optional(),
+
+  primaryImageUrl:
+    imageUrlSchema.nullable().optional(),
+
+  categoryIds: z
+    .array(idSchema)
+    .max(100)
+    .optional(),
 
   specifications: z
     .array(
       z.object({
-        label: z.string().min(1),
-        value: z.string().nullable().optional(),
-        displayOrder: z.number().int().default(0),
+        label: z
+          .string()
+          .trim()
+          .min(1)
+          .max(200),
+
+        value: z
+          .string()
+          .max(2000)
+          .nullable()
+          .optional(),
+
+        displayOrder:
+          displayOrderSchema.default(0),
       })
     )
+    .max(100)
     .optional(),
 
   images: z
     .array(
       z.object({
         url: imageUrlSchema,
-        altText: z.string().nullable().optional(),
-        displayOrder: z.number().int().default(0),
-        isPrimary: z.boolean().default(false),
+
+        altText: z
+          .string()
+          .max(500)
+          .nullable()
+          .optional(),
+
+        displayOrder:
+          displayOrderSchema.default(0),
+
+        isPrimary:
+          z.boolean().default(false),
       })
     )
+    .max(50)
     .optional(),
 
   marketplaceLinks: z
     .array(
       z.object({
-        marketplaceId: z.string(),
+        marketplaceId: idSchema,
 
-        url: z.string().url().refine(
-          (value) => {
-            try {
-              const url = new URL(value);
+        url: marketplaceUrlSchema,
 
-              return (
-                url.protocol === 'https:' ||
-                url.protocol === 'http:'
-              );
-            } catch {
-              return false;
-            }
-          },
-          'Invalid marketplace URL.'
-        ),
+        isActive:
+          z.boolean().default(true),
 
-        isActive: z.boolean().default(true),
-        displayOrder: z.number().int().default(0),
+        displayOrder:
+          displayOrderSchema.default(0),
       })
     )
+    .max(50)
     .optional(),
 });
 
@@ -187,6 +290,10 @@ export async function GET(
 
     const { id } = await params;
 
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid product identifier.');
+    }
+
     const product = await prisma.product.findUnique({
       where: { id },
 
@@ -233,6 +340,7 @@ export async function GET(
         product,
       })
     );
+
   } catch (error) {
     return apiError(error, 'Product');
   }
@@ -257,17 +365,36 @@ export async function PUT(
     const admin = authorization.user;
     const { id } = await params;
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid product identifier.');
+    }
 
-    const parsed = updateProductSchema.safeParse(body);
+    // REQUEST BODY PROTECTION
+
+    const body = await readJsonBody(
+      request,
+      REQUEST_LIMITS.PRODUCT
+    );
+
+    if (!body.ok) {
+      return body.response;
+    }
+
+    const parsed = updateProductSchema.safeParse(
+      body.data
+    );
 
     if (!parsed.success) {
       return badInput(
         'Invalid product data.',
-        parsed.error.flatten()
+        z.flattenError(parsed.error)
       );
+    }
+
+    // REJECT EMPTY UPDATES
+
+    if (Object.keys(parsed.data).length === 0) {
+      return badInput('No product changes provided.');
     }
 
     const {
@@ -277,6 +404,8 @@ export async function PUT(
       marketplaceLinks,
       ...productData
     } = parsed.data;
+
+    // REMOVE DUPLICATE RELATIONS
 
     const uniqueCategoryIds =
       categoryIds === undefined
@@ -300,18 +429,17 @@ export async function PUT(
     const updated = await prisma.$transaction(
       async (tx) => {
 
-        const existing =
-          await tx.product.findUnique({
-            where: { id },
+        const existing = await tx.product.findUnique({
+          where: { id },
 
-            select: {
-              id: true,
-              publishedAt: true,
-              status: true,
-              priceInPaise: true,
-              originalPriceInPaise: true,
-            },
-          });
+          select: {
+            id: true,
+            publishedAt: true,
+            status: true,
+            priceInPaise: true,
+            originalPriceInPaise: true,
+          },
+        });
 
         if (!existing) {
           return {
@@ -361,6 +489,7 @@ export async function PUT(
         // UPDATE PRODUCT CATEGORIES
 
         if (uniqueCategoryIds !== undefined) {
+
           await tx.productCategory.deleteMany({
             where: {
               productId: id,
@@ -382,6 +511,7 @@ export async function PUT(
         // UPDATE PRODUCT SPECIFICATIONS
 
         if (specifications !== undefined) {
+
           await tx.productSpecification.deleteMany({
             where: {
               productId: id,
@@ -403,6 +533,7 @@ export async function PUT(
         // UPDATE PRODUCT IMAGES
 
         if (images !== undefined) {
+
           await tx.productImage.deleteMany({
             where: {
               productId: id,
@@ -425,6 +556,7 @@ export async function PUT(
         // UPDATE MARKETPLACE LINKS
 
         if (uniqueMarketplaceLinks !== undefined) {
+
           await tx.productMarketplaceLink.deleteMany({
             where: {
               productId: id,
@@ -456,7 +588,7 @@ export async function PUT(
           tx
         );
 
-        // RECORD STATUS CHANGE WHEN APPLICABLE
+        // RECORD STATUS CHANGE
 
         if (
           productData.status !== undefined &&
@@ -465,8 +597,11 @@ export async function PUT(
           await recordAdminAction(
             admin,
             {
-              action: AUDIT_ACTIONS.PRODUCT_STATUS_CHANGED,
+              action:
+                AUDIT_ACTIONS.PRODUCT_STATUS_CHANGED,
+
               entityType: AUDIT_ENTITIES.PRODUCT,
+
               entityId: id,
             },
             tx
@@ -480,6 +615,7 @@ export async function PUT(
 
           include: {
             images: true,
+
             specifications: true,
 
             categories: {
@@ -522,6 +658,7 @@ export async function PUT(
         message: 'Product updated successfully.',
       })
     );
+
   } catch (error) {
     return apiError(error, 'Product');
   }
@@ -546,11 +683,24 @@ export async function PATCH(
     const admin = authorization.user;
     const { id } = await params;
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid product identifier.');
+    }
 
-    const parsed = productActionSchema.safeParse(body);
+    // MAXIMUM STATUS REQUEST SIZE: 4 KB
+
+    const body = await readJsonBody(
+      request,
+      4 * 1024
+    );
+
+    if (!body.ok) {
+      return body.response;
+    }
+
+    const parsed = productActionSchema.safeParse(
+      body.data
+    );
 
     if (!parsed.success) {
       return badInput('Invalid product action.');
@@ -603,17 +753,20 @@ export async function PATCH(
 
     const product = await prisma.$transaction(
       async (tx) => {
-        const updatedProduct =
-          await tx.product.update({
-            where: { id },
-            data: updateData,
-          });
+
+        const updatedProduct = await tx.product.update({
+          where: { id },
+          data: updateData,
+        });
 
         await recordAdminAction(
           admin,
           {
-            action: AUDIT_ACTIONS.PRODUCT_STATUS_CHANGED,
+            action:
+              AUDIT_ACTIONS.PRODUCT_STATUS_CHANGED,
+
             entityType: AUDIT_ENTITIES.PRODUCT,
+
             entityId: id,
           },
           tx
@@ -631,6 +784,7 @@ export async function PATCH(
         product,
       })
     );
+
   } catch (error) {
     return apiError(error, 'Product');
   }
@@ -655,6 +809,10 @@ export async function DELETE(
 
     const admin = authorization.user;
     const { id } = await params;
+
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid product identifier.');
+    }
 
     // ATOMIC PRODUCT DELETION AND AUDIT LOGGING
 
@@ -686,6 +844,7 @@ export async function DELETE(
         message: 'Product permanently deleted.',
       })
     );
+
   } catch (error) {
     return apiError(error, 'Product');
   }

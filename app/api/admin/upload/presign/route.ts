@@ -1,8 +1,4 @@
-import {
-  NextRequest,
-  NextResponse,
-} from 'next/server';
-
+import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { PERMISSIONS } from '@/lib/permissions';
@@ -14,24 +10,22 @@ import {
   secureAdminResponse,
 } from '@/lib/admin-api';
 
-// ==========================================
-// ROUTE CONFIGURATION
-// ==========================================
+import {
+  readJsonBody,
+} from '@/lib/request-validation';
 
 export const dynamic = 'force-dynamic';
-
 export const revalidate = 0;
 
-// ==========================================
-// MAXIMUM IMAGE FILE SIZE
-// 10 MB PER IMAGE
-// ==========================================
+// MAXIMUM IMAGE FILE SIZE: 10 MB
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
-// ==========================================
+// MAXIMUM METADATA REQUEST SIZE: 4 KB
+
+const MAX_REQUEST_SIZE = 4 * 1024;
+
 // SUPPORTED IMAGE FORMATS
-// ==========================================
 
 const allowedContentTypes = z.enum([
   'image/jpeg',
@@ -40,16 +34,23 @@ const allowedContentTypes = z.enum([
   'image/gif',
 ]);
 
-// ==========================================
 // UPLOAD REQUEST VALIDATION
-// ==========================================
 
 const presignSchema = z.object({
+
   filename: z
     .string()
     .trim()
-    .min(1, 'Filename is required')
-    .max(255),
+    .min(1, 'Filename is required.')
+    .max(255)
+    .refine(
+      (value) =>
+        !/[\x00-\x1F\x7F]/.test(value) &&
+        !value.includes('/') &&
+        !value.includes('\\'),
+
+      'Invalid image filename.'
+    ),
 
   contentType:
     allowedContentTypes,
@@ -60,21 +61,16 @@ const presignSchema = z.object({
     .positive()
     .max(
       MAX_FILE_SIZE,
-      'Maximum image size is 10 MB'
+      'Maximum image size is 10 MB.'
     ),
 });
 
-// ==========================================
 // PREPARE IMAGE UPLOAD
-// ==========================================
 
-export async function POST(
-  request: NextRequest
-) {
+export async function POST(request: NextRequest) {
   try {
-    // ======================================
+
     // AUTHENTICATION, CSRF AND PERMISSIONS
-    // ======================================
 
     const denied = await adminDenied({
       request,
@@ -87,49 +83,22 @@ export async function POST(
       return denied;
     }
 
-    // ======================================
-    // VERIFY JSON CONTENT TYPE
-    // ======================================
+    // CENTRALIZED REQUEST BODY PROTECTION
 
-    const contentTypeHeader =
-      request.headers
-        .get('content-type')
-        ?.split(';')[0]
-        .trim()
-        .toLowerCase();
+    const body = await readJsonBody(
+      request,
+      MAX_REQUEST_SIZE
+    );
 
-    if (
-      contentTypeHeader !== 'application/json'
-    ) {
-      return secureAdminResponse(
-        NextResponse.json(
-          {
-            success: false,
-
-            error:
-              'Content-Type must be application/json.',
-          },
-          {
-            status: 415,
-          }
-        )
-      );
+    if (!body.ok) {
+      return body.response;
     }
 
-    // ======================================
-    // PARSE REQUEST BODY
-    // ======================================
-
-    const body = await request
-      .json()
-      .catch(() => null);
-
-    // ======================================
     // VALIDATE IMAGE UPLOAD INFORMATION
-    // ======================================
 
-    const parsed =
-      presignSchema.safeParse(body);
+    const parsed = presignSchema.safeParse(
+      body.data
+    );
 
     if (!parsed.success) {
       return badInput(
@@ -145,9 +114,7 @@ export async function POST(
       size,
     } = parsed.data;
 
-    // ======================================
     // SANITIZE ORIGINAL FILENAME
-    // ======================================
 
     const cleanFilename = filename
       .replace(
@@ -159,24 +126,19 @@ export async function POST(
         ''
       );
 
-    // ======================================
     // REJECT INVALID SANITIZED FILENAMES
-    // ======================================
 
-    if (!cleanFilename) {
+    if (
+      !cleanFilename ||
+      !/[a-zA-Z0-9]/.test(cleanFilename)
+    ) {
       return badInput(
         'Invalid image filename.'
       );
     }
 
-    // ======================================
     // LOCAL MULTIPART UPLOAD CONFIGURATION
-    //
-    // CLOUDFLARE R2 INTEGRATION WILL BE
-    // IMPLEMENTED IN STEP 14.4
-    //
-    // NEVER RETURN FAKE R2 PUBLIC URLS
-    // ======================================
+    // R2 STORAGE WILL BE INTEGRATED IN STEP 14.4
 
     return secureAdminResponse(
       NextResponse.json({

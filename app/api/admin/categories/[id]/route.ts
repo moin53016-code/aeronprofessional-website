@@ -20,6 +20,11 @@ import {
   AUDIT_ENTITIES,
 } from '@/lib/audit-log';
 
+import {
+  readJsonBody,
+  REQUEST_LIMITS,
+} from '@/lib/request-validation';
+
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
@@ -27,24 +32,106 @@ type Context = {
   params: Promise<{ id: string }>;
 };
 
+// CATEGORY ID VALIDATION
+
+const idSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[a-zA-Z0-9_-]+$/);
+
+// CATEGORY IMAGE URL VALIDATION
+
+const imageUrlSchema = z
+  .string()
+  .trim()
+  .max(2048)
+  .refine(
+    (value) => {
+      if (value === '') {
+        return true;
+      }
+
+      if (
+        /^\/(?:uploads|images)\/[a-zA-Z0-9._-]+$/.test(value)
+      ) {
+        return true;
+      }
+
+      try {
+        const url = new URL(value);
+
+        return (
+          (
+            url.protocol === 'https:' ||
+            url.protocol === 'http:'
+          ) &&
+          Boolean(url.hostname) &&
+          !url.username &&
+          !url.password
+        );
+
+      } catch {
+        return false;
+      }
+    },
+    'Enter a valid image URL or local image path.'
+  );
+
 // CATEGORY UPDATE VALIDATION
 
 const updateCategorySchema = z.object({
-  name: z.string().trim().min(1).optional(),
 
-  slug: z.string().trim().min(1).optional(),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional(),
 
-  label: z.string().trim().min(1).optional(),
+  slug: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .regex(
+      /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+      'Invalid category slug.'
+    )
+    .optional(),
 
-  description: z.string().nullable().optional(),
+  label: z
+    .string()
+    .trim()
+    .min(1)
+    .max(150)
+    .optional(),
 
-  imageUrl: z.string().nullable().optional(),
+  description: z
+    .string()
+    .trim()
+    .max(5000)
+    .nullable()
+    .optional(),
 
-  displayOrder: z.number().int().optional(),
+  imageUrl: imageUrlSchema
+    .nullable()
+    .optional(),
 
-  isVisible: z.boolean().optional(),
+  displayOrder: z
+    .number()
+    .int()
+    .min(-2147483648)
+    .max(2147483647)
+    .optional(),
 
-  isPublished: z.boolean().optional(),
+  isVisible: z
+    .boolean()
+    .optional(),
+
+  isPublished: z
+    .boolean()
+    .optional(),
 });
 
 // CATEGORY STATUS VALIDATION
@@ -110,6 +197,7 @@ export async function GET(
   { params }: Context
 ) {
   try {
+
     const denied = await adminDenied({
       request,
       permission: PERMISSIONS.CATEGORY_VIEW,
@@ -120,6 +208,10 @@ export async function GET(
     }
 
     const { id } = await params;
+
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid category identifier.');
+    }
 
     const category = await prisma.category.findUnique({
       where: { id },
@@ -157,6 +249,7 @@ export async function PUT(
   { params }: Context
 ) {
   try {
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.CATEGORY_MANAGE,
@@ -169,11 +262,24 @@ export async function PUT(
     const admin = authorization.user;
     const { id } = await params;
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid category identifier.');
+    }
 
-    const parsed = updateCategorySchema.safeParse(body);
+    // REQUEST BODY PROTECTION
+
+    const body = await readJsonBody(
+      request,
+      REQUEST_LIMITS.JSON
+    );
+
+    if (!body.ok) {
+      return body.response;
+    }
+
+    const parsed = updateCategorySchema.safeParse(
+      body.data
+    );
 
     if (!parsed.success) {
       return badInput(
@@ -181,6 +287,8 @@ export async function PUT(
         z.flattenError(parsed.error)
       );
     }
+
+    // REJECT EMPTY UPDATES
 
     if (Object.keys(parsed.data).length === 0) {
       return badInput(
@@ -208,6 +316,7 @@ export async function PUT(
 
         const updatedCategory = await tx.category.update({
           where: { id },
+
           data: parsed.data,
         });
 
@@ -217,7 +326,9 @@ export async function PUT(
           admin,
           {
             action: AUDIT_ACTIONS.CATEGORY_UPDATED,
+
             entityType: AUDIT_ENTITIES.CATEGORY,
+
             entityId: id,
           },
           tx
@@ -274,6 +385,7 @@ export async function PATCH(
   { params }: Context
 ) {
   try {
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.CATEGORY_MANAGE,
@@ -286,11 +398,24 @@ export async function PATCH(
     const admin = authorization.user;
     const { id } = await params;
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid category identifier.');
+    }
 
-    const parsed = categoryStatusSchema.safeParse(body);
+    // MAXIMUM STATUS REQUEST SIZE: 4 KB
+
+    const body = await readJsonBody(
+      request,
+      4 * 1024
+    );
+
+    if (!body.ok) {
+      return body.response;
+    }
+
+    const parsed = categoryStatusSchema.safeParse(
+      body.data
+    );
 
     if (
       !parsed.success ||
@@ -321,6 +446,7 @@ export async function PATCH(
 
         const updatedCategory = await tx.category.update({
           where: { id },
+
           data: parsed.data,
         });
 
@@ -375,6 +501,7 @@ export async function DELETE(
   { params }: Context
 ) {
   try {
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.CATEGORY_MANAGE,
@@ -386,6 +513,10 @@ export async function DELETE(
 
     const admin = authorization.user;
     const { id } = await params;
+
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid category identifier.');
+    }
 
     // ATOMIC CATEGORY DELETION AND AUDIT LOGGING
 
@@ -426,7 +557,9 @@ export async function DELETE(
           admin,
           {
             action: AUDIT_ACTIONS.CATEGORY_DELETED,
+
             entityType: AUDIT_ENTITIES.CATEGORY,
+
             entityId: id,
           },
           tx
@@ -434,6 +567,7 @@ export async function DELETE(
 
         return {
           name: category.name,
+
           affectedProducts: removedAssignments.count,
         };
       }

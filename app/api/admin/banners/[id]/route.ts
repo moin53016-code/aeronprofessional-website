@@ -19,6 +19,11 @@ import {
   AUDIT_ENTITIES,
 } from '@/lib/audit-log';
 
+import {
+  readJsonBody,
+  REQUEST_LIMITS,
+} from '@/lib/request-validation';
+
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
@@ -26,38 +31,91 @@ type Context = {
   params: Promise<{ id: string }>;
 };
 
+// BANNER ID VALIDATION
+
+const idSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[a-zA-Z0-9_-]+$/);
+
+// DISPLAY ORDER VALIDATION
+
+const displayOrderSchema = z
+  .number()
+  .int()
+  .min(-2147483648)
+  .max(2147483647);
+
 // IMAGE URL VALIDATION
 
-const imageUrlSchema = z.string().trim().refine(
-  (value) => {
-    if (
-      /^\/(?:uploads|images)\/[a-zA-Z0-9._-]+$/.test(value)
-    ) {
-      return true;
-    }
+const imageUrlSchema = z
+  .string()
+  .trim()
+  .max(2048)
+  .refine(
+    (value) => {
+      if (
+        /^\/(?:uploads|images)\/[a-zA-Z0-9._-]+$/.test(value)
+      ) {
+        return true;
+      }
 
-    try {
-      const url = new URL(value);
+      try {
+        const url = new URL(value);
 
-      return (
-        url.protocol === 'https:' ||
-        url.protocol === 'http:'
-      );
-    } catch {
-      return false;
-    }
-  },
-  'Enter a valid image URL or local image path.'
-);
+        return (
+          (
+            url.protocol === 'https:' ||
+            url.protocol === 'http:'
+          ) &&
+          Boolean(url.hostname) &&
+          !url.username &&
+          !url.password
+        );
+
+      } catch {
+        return false;
+      }
+    },
+    'Enter a valid image URL or local image path.'
+  );
+
+// DATE VALIDATION
+
+const dateSchema = z
+  .string()
+  .max(64)
+  .datetime({ offset: true })
+  .refine(
+    (value) => Number.isFinite(Date.parse(value)),
+    'Invalid banner date.'
+  );
 
 // BANNER UPDATE VALIDATION
 
 const updateBannerSchema = z.object({
-  eyebrow: z.string().trim().min(1).max(200).optional(),
 
-  title: z.string().trim().min(1).max(500).optional(),
+  eyebrow: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional(),
 
-  description: z.string().trim().min(1).max(5000).optional(),
+  title: z
+    .string()
+    .trim()
+    .min(1)
+    .max(500)
+    .optional(),
+
+  description: z
+    .string()
+    .trim()
+    .min(1)
+    .max(5000)
+    .optional(),
 
   imageUrl: imageUrlSchema.optional(),
 
@@ -80,29 +138,28 @@ const updateBannerSchema = z.object({
     .nullable()
     .optional(),
 
-  displayOrder: z.number().int().optional(),
+  displayOrder:
+    displayOrderSchema.optional(),
 
-  isActive: z.boolean().optional(),
+  isActive:
+    z.boolean().optional(),
 
-  startsAt: z
-    .string()
-    .datetime({ offset: true })
-    .nullable()
-    .optional(),
+  startsAt:
+    dateSchema.nullable().optional(),
 
-  endsAt: z
-    .string()
-    .datetime({ offset: true })
-    .nullable()
-    .optional(),
+  endsAt:
+    dateSchema.nullable().optional(),
 });
 
 // BANNER STATUS VALIDATION
 
 const patchBannerSchema = z.object({
-  isActive: z.boolean().optional(),
 
-  displayOrder: z.number().int().optional(),
+  isActive:
+    z.boolean().optional(),
+
+  displayOrder:
+    displayOrderSchema.optional(),
 });
 
 // BANNER NOT FOUND RESPONSE
@@ -128,6 +185,7 @@ export async function GET(
   { params }: Context
 ) {
   try {
+
     const denied = await adminDenied({
       request,
       permission: PERMISSIONS.BANNER_VIEW,
@@ -138,6 +196,10 @@ export async function GET(
     }
 
     const { id } = await params;
+
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid banner identifier.');
+    }
 
     const banner = await prisma.homepageBanner.findUnique({
       where: { id },
@@ -166,6 +228,9 @@ export async function PUT(
   { params }: Context
 ) {
   try {
+
+    // VERIFY ADMIN PERMISSION
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.BANNER_MANAGE,
@@ -178,11 +243,24 @@ export async function PUT(
     const admin = authorization.user;
     const { id } = await params;
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid banner identifier.');
+    }
 
-    const parsed = updateBannerSchema.safeParse(body);
+    // CENTRALIZED REQUEST BODY PROTECTION
+
+    const body = await readJsonBody(
+      request,
+      REQUEST_LIMITS.JSON
+    );
+
+    if (!body.ok) {
+      return body.response;
+    }
+
+    const parsed = updateBannerSchema.safeParse(
+      body.data
+    );
 
     if (!parsed.success) {
       return badInput(
@@ -190,6 +268,8 @@ export async function PUT(
         z.flattenError(parsed.error)
       );
     }
+
+    // REJECT EMPTY UPDATES
 
     if (Object.keys(parsed.data).length === 0) {
       return badInput('No banner changes provided.');
@@ -236,7 +316,7 @@ export async function PUT(
               ? new Date(endsAt)
               : null;
 
-        // VALIDATE BANNER DATE RANGE
+        // VALIDATE EFFECTIVE DATE RANGE
 
         if (
           startDate &&
@@ -258,19 +338,22 @@ export async function PUT(
 
             ...(mobileImageUrl !== undefined
               ? {
-                  mobileImageUrl: mobileImageUrl || null,
+                  mobileImageUrl:
+                    mobileImageUrl || null,
                 }
               : {}),
 
             ...(buttonLabel !== undefined
               ? {
-                  buttonLabel: buttonLabel || 'SHOP NOW',
+                  buttonLabel:
+                    buttonLabel || 'SHOP NOW',
                 }
               : {}),
 
             ...(buttonTarget !== undefined
               ? {
-                  buttonTarget: buttonTarget || 'Shop All',
+                  buttonTarget:
+                    buttonTarget || 'Shop All',
                 }
               : {}),
 
@@ -294,7 +377,9 @@ export async function PUT(
           admin,
           {
             action: AUDIT_ACTIONS.BANNER_UPDATED,
+
             entityType: AUDIT_ENTITIES.BANNER,
+
             entityId: id,
           },
           tx
@@ -308,8 +393,11 @@ export async function PUT(
           await recordAdminAction(
             admin,
             {
-              action: AUDIT_ACTIONS.BANNER_STATUS_CHANGED,
+              action:
+                AUDIT_ACTIONS.BANNER_STATUS_CHANGED,
+
               entityType: AUDIT_ENTITIES.BANNER,
+
               entityId: id,
             },
             tx
@@ -338,7 +426,9 @@ export async function PUT(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         banner: result.banner,
+
         message: 'Banner updated successfully.',
       })
     );
@@ -355,6 +445,7 @@ export async function PATCH(
   { params }: Context
 ) {
   try {
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.BANNER_MANAGE,
@@ -367,11 +458,24 @@ export async function PATCH(
     const admin = authorization.user;
     const { id } = await params;
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid banner identifier.');
+    }
 
-    const parsed = patchBannerSchema.safeParse(body);
+    // MAXIMUM STATUS REQUEST SIZE: 4 KB
+
+    const body = await readJsonBody(
+      request,
+      4 * 1024
+    );
+
+    if (!body.ok) {
+      return body.response;
+    }
+
+    const parsed = patchBannerSchema.safeParse(
+      body.data
+    );
 
     if (!parsed.success) {
       return badInput(
@@ -391,23 +495,26 @@ export async function PATCH(
     const banner = await prisma.$transaction(
       async (tx) => {
 
-        const existing = await tx.homepageBanner.findUnique({
-          where: { id },
+        const existing =
+          await tx.homepageBanner.findUnique({
+            where: { id },
 
-          select: {
-            isActive: true,
-            displayOrder: true,
-          },
-        });
+            select: {
+              isActive: true,
+              displayOrder: true,
+            },
+          });
 
         if (!existing) {
           return null;
         }
 
-        const updatedBanner = await tx.homepageBanner.update({
-          where: { id },
-          data: parsed.data,
-        });
+        const updatedBanner =
+          await tx.homepageBanner.update({
+            where: { id },
+
+            data: parsed.data,
+          });
 
         // RECORD STATUS CHANGE
 
@@ -417,8 +524,11 @@ export async function PATCH(
           await recordAdminAction(
             admin,
             {
-              action: AUDIT_ACTIONS.BANNER_STATUS_CHANGED,
+              action:
+                AUDIT_ACTIONS.BANNER_STATUS_CHANGED,
+
               entityType: AUDIT_ENTITIES.BANNER,
+
               entityId: id,
             },
             tx
@@ -428,13 +538,16 @@ export async function PATCH(
         // RECORD DISPLAY ORDER CHANGE
 
         if (
-          existing.displayOrder !== updatedBanner.displayOrder
+          existing.displayOrder !==
+          updatedBanner.displayOrder
         ) {
           await recordAdminAction(
             admin,
             {
               action: AUDIT_ACTIONS.BANNER_UPDATED,
+
               entityType: AUDIT_ENTITIES.BANNER,
+
               entityId: id,
             },
             tx
@@ -454,7 +567,9 @@ export async function PATCH(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         banner,
+
         message: 'Banner status updated successfully.',
       })
     );
@@ -471,6 +586,7 @@ export async function DELETE(
   { params }: Context
 ) {
   try {
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.BANNER_MANAGE,
@@ -482,6 +598,10 @@ export async function DELETE(
 
     const admin = authorization.user;
     const { id } = await params;
+
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid banner identifier.');
+    }
 
     // ATOMIC BANNER DELETION AND AUDIT LOGGING
 
@@ -495,7 +615,9 @@ export async function DELETE(
         admin,
         {
           action: AUDIT_ACTIONS.BANNER_DELETED,
+
           entityType: AUDIT_ENTITIES.BANNER,
+
           entityId: id,
         },
         tx
@@ -508,7 +630,9 @@ export async function DELETE(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         deleted: true,
+
         message: 'Banner deleted successfully.',
       })
     );

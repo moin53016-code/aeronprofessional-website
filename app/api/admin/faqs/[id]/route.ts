@@ -19,6 +19,11 @@ import {
   AUDIT_ENTITIES,
 } from '@/lib/audit-log';
 
+import {
+  readJsonBody,
+  REQUEST_LIMITS,
+} from '@/lib/request-validation';
+
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
@@ -26,9 +31,26 @@ type Context = {
   params: Promise<{ id: string }>;
 };
 
+// FAQ ID VALIDATION
+
+const idSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[a-zA-Z0-9_-]+$/);
+
+// DISPLAY ORDER VALIDATION
+
+const displayOrderSchema = z
+  .number()
+  .int()
+  .min(-2147483648)
+  .max(2147483647);
+
 // FAQ UPDATE VALIDATION
 
 const updateFaqSchema = z.object({
+
   question: z
     .string()
     .trim()
@@ -43,17 +65,22 @@ const updateFaqSchema = z.object({
     .max(10000)
     .optional(),
 
-  displayOrder: z.number().int().optional(),
+  displayOrder:
+    displayOrderSchema.optional(),
 
-  isActive: z.boolean().optional(),
+  isActive:
+    z.boolean().optional(),
 });
 
 // FAQ STATUS VALIDATION
 
 const statusSchema = z.object({
-  isActive: z.boolean().optional(),
 
-  displayOrder: z.number().int().optional(),
+  isActive:
+    z.boolean().optional(),
+
+  displayOrder:
+    displayOrderSchema.optional(),
 });
 
 // FAQ NOT FOUND RESPONSE
@@ -63,6 +90,7 @@ function faqNotFound() {
     NextResponse.json(
       {
         success: false,
+
         error: 'FAQ not found.',
       },
       {
@@ -79,6 +107,7 @@ export async function GET(
   { params }: Context
 ) {
   try {
+
     const denied = await adminDenied({
       request,
       permission: PERMISSIONS.FAQ_VIEW,
@@ -89,6 +118,10 @@ export async function GET(
     }
 
     const { id } = await params;
+
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid FAQ identifier.');
+    }
 
     const faq = await prisma.fAQ.findUnique({
       where: { id },
@@ -117,6 +150,9 @@ export async function PUT(
   { params }: Context
 ) {
   try {
+
+    // VERIFY ADMIN PERMISSION
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.FAQ_MANAGE,
@@ -129,11 +165,26 @@ export async function PUT(
     const admin = authorization.user;
     const { id } = await params;
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid FAQ identifier.');
+    }
 
-    const parsed = updateFaqSchema.safeParse(body);
+    // CENTRALIZED REQUEST BODY PROTECTION
+
+    const body = await readJsonBody(
+      request,
+      REQUEST_LIMITS.JSON
+    );
+
+    if (!body.ok) {
+      return body.response;
+    }
+
+    // VALIDATE FAQ INPUT
+
+    const parsed = updateFaqSchema.safeParse(
+      body.data
+    );
 
     if (!parsed.success) {
       return badInput(
@@ -141,6 +192,8 @@ export async function PUT(
         z.flattenError(parsed.error)
       );
     }
+
+    // REJECT EMPTY UPDATES
 
     if (Object.keys(parsed.data).length === 0) {
       return badInput('No FAQ changes provided.');
@@ -165,6 +218,7 @@ export async function PUT(
 
         const updatedFaq = await tx.fAQ.update({
           where: { id },
+
           data: parsed.data,
         });
 
@@ -174,7 +228,9 @@ export async function PUT(
           admin,
           {
             action: AUDIT_ACTIONS.FAQ_UPDATED,
+
             entityType: AUDIT_ENTITIES.FAQ,
+
             entityId: id,
           },
           tx
@@ -185,11 +241,16 @@ export async function PUT(
         if (
           existing.isActive !== updatedFaq.isActive
         ) {
+
           await recordAdminAction(
             admin,
             {
-              action: AUDIT_ACTIONS.FAQ_STATUS_CHANGED,
-              entityType: AUDIT_ENTITIES.FAQ,
+              action:
+                AUDIT_ACTIONS.FAQ_STATUS_CHANGED,
+
+              entityType:
+                AUDIT_ENTITIES.FAQ,
+
               entityId: id,
             },
             tx
@@ -209,7 +270,9 @@ export async function PUT(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         faq,
+
         message: 'FAQ updated successfully.',
       })
     );
@@ -226,6 +289,7 @@ export async function PATCH(
   { params }: Context
 ) {
   try {
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.FAQ_MANAGE,
@@ -238,11 +302,24 @@ export async function PATCH(
     const admin = authorization.user;
     const { id } = await params;
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid FAQ identifier.');
+    }
 
-    const parsed = statusSchema.safeParse(body);
+    // MAXIMUM STATUS REQUEST SIZE: 4 KB
+
+    const body = await readJsonBody(
+      request,
+      4 * 1024
+    );
+
+    if (!body.ok) {
+      return body.response;
+    }
+
+    const parsed = statusSchema.safeParse(
+      body.data
+    );
 
     if (!parsed.success) {
       return badInput(
@@ -277,6 +354,7 @@ export async function PATCH(
 
         const updatedFaq = await tx.fAQ.update({
           where: { id },
+
           data: parsed.data,
         });
 
@@ -285,11 +363,16 @@ export async function PATCH(
         if (
           existing.isActive !== updatedFaq.isActive
         ) {
+
           await recordAdminAction(
             admin,
             {
-              action: AUDIT_ACTIONS.FAQ_STATUS_CHANGED,
-              entityType: AUDIT_ENTITIES.FAQ,
+              action:
+                AUDIT_ACTIONS.FAQ_STATUS_CHANGED,
+
+              entityType:
+                AUDIT_ENTITIES.FAQ,
+
               entityId: id,
             },
             tx
@@ -299,13 +382,19 @@ export async function PATCH(
         // RECORD DISPLAY ORDER CHANGE
 
         if (
-          existing.displayOrder !== updatedFaq.displayOrder
+          existing.displayOrder !==
+          updatedFaq.displayOrder
         ) {
+
           await recordAdminAction(
             admin,
             {
-              action: AUDIT_ACTIONS.FAQ_UPDATED,
-              entityType: AUDIT_ENTITIES.FAQ,
+              action:
+                AUDIT_ACTIONS.FAQ_UPDATED,
+
+              entityType:
+                AUDIT_ENTITIES.FAQ,
+
               entityId: id,
             },
             tx
@@ -325,7 +414,9 @@ export async function PATCH(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         faq,
+
         message: 'FAQ status updated successfully.',
       })
     );
@@ -342,6 +433,7 @@ export async function DELETE(
   { params }: Context
 ) {
   try {
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.FAQ_MANAGE,
@@ -354,6 +446,10 @@ export async function DELETE(
     const admin = authorization.user;
     const { id } = await params;
 
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid FAQ identifier.');
+    }
+
     // ATOMIC FAQ DELETION AND AUDIT LOGGING
 
     await prisma.$transaction(async (tx) => {
@@ -365,8 +461,12 @@ export async function DELETE(
       await recordAdminAction(
         admin,
         {
-          action: AUDIT_ACTIONS.FAQ_DELETED,
-          entityType: AUDIT_ENTITIES.FAQ,
+          action:
+            AUDIT_ACTIONS.FAQ_DELETED,
+
+          entityType:
+            AUDIT_ENTITIES.FAQ,
+
           entityId: id,
         },
         tx
@@ -379,7 +479,9 @@ export async function DELETE(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         deleted: true,
+
         message: 'FAQ deleted successfully.',
       })
     );

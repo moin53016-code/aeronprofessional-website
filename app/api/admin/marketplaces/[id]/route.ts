@@ -19,6 +19,11 @@ import {
   AUDIT_ENTITIES,
 } from '@/lib/audit-log';
 
+import {
+  readJsonBody,
+  REQUEST_LIMITS,
+} from '@/lib/request-validation';
+
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
@@ -26,9 +31,44 @@ type Context = {
   params: Promise<{ id: string }>;
 };
 
-// MARKETPLACE VALIDATION
+// MARKETPLACE ID VALIDATION
+
+const idSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[a-zA-Z0-9_-]+$/);
+
+// MARKETPLACE URL VALIDATION
+
+const marketplaceUrlSchema = z
+  .string()
+  .trim()
+  .max(2048)
+  .url('Enter a valid marketplace URL')
+  .refine(
+    (value) => {
+      try {
+        const url = new URL(value);
+
+        return (
+          url.protocol === 'https:' &&
+          Boolean(url.hostname) &&
+          !url.username &&
+          !url.password
+        );
+
+      } catch {
+        return false;
+      }
+    },
+    'Marketplace URL must be a valid HTTPS link.'
+  );
+
+// MARKETPLACE UPDATE VALIDATION
 
 const marketplaceSchema = z.object({
+
   name: z
     .string()
     .trim()
@@ -49,27 +89,7 @@ const marketplaceSchema = z.object({
     .nullable()
     .optional(),
 
-  url: z
-    .string()
-    .trim()
-    .max(2048)
-    .url('Enter a valid marketplace URL')
-    .refine(
-      (value) => {
-        try {
-          const url = new URL(value);
-
-          return (
-            url.protocol === 'https:' &&
-            !url.username &&
-            !url.password
-          );
-        } catch {
-          return false;
-        }
-      },
-      'Marketplace URL must be a valid HTTPS link'
-    ),
+  url: marketplaceUrlSchema,
 });
 
 // MARKETPLACE STATUS VALIDATION
@@ -85,6 +105,7 @@ function marketplaceNotFound() {
     NextResponse.json(
       {
         success: false,
+
         error: 'Marketplace not found.',
       },
       {
@@ -101,7 +122,9 @@ function duplicateMarketplace() {
     NextResponse.json(
       {
         success: false,
-        error: 'A marketplace with this name already exists.',
+
+        error:
+          'A marketplace with this name already exists.',
       },
       {
         status: 409,
@@ -117,6 +140,7 @@ export async function GET(
   { params }: Context
 ) {
   try {
+
     const denied = await adminDenied({
       request,
       permission: PERMISSIONS.MARKETPLACE_VIEW,
@@ -127,6 +151,10 @@ export async function GET(
     }
 
     const { id } = await params;
+
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid marketplace identifier.');
+    }
 
     const marketplace = await prisma.marketplace.findUnique({
       where: { id },
@@ -139,6 +167,7 @@ export async function GET(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         marketplace,
       })
     );
@@ -156,6 +185,7 @@ export async function PUT(
   { params }: Context
 ) {
   try {
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.MARKETPLACE_MANAGE,
@@ -168,11 +198,26 @@ export async function PUT(
     const admin = authorization.user;
     const { id } = await params;
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid marketplace identifier.');
+    }
 
-    const parsed = marketplaceSchema.safeParse(body);
+    // CENTRALIZED REQUEST BODY PROTECTION
+
+    const body = await readJsonBody(
+      request,
+      REQUEST_LIMITS.JSON
+    );
+
+    if (!body.ok) {
+      return body.response;
+    }
+
+    // VALIDATE MARKETPLACE INPUT
+
+    const parsed = marketplaceSchema.safeParse(
+      body.data
+    );
 
     if (!parsed.success) {
       return badInput(
@@ -188,9 +233,10 @@ export async function PUT(
 
         // VERIFY EXISTING MARKETPLACE
 
-        const existing = await tx.marketplace.findUnique({
-          where: { id },
-        });
+        const existing =
+          await tx.marketplace.findUnique({
+            where: { id },
+          });
 
         if (!existing) {
           return {
@@ -200,18 +246,19 @@ export async function PUT(
 
         // PREVENT DUPLICATE MARKETPLACE NAMES
 
-        const duplicate = await tx.marketplace.findFirst({
-          where: {
-            id: {
-              not: id,
-            },
+        const duplicate =
+          await tx.marketplace.findFirst({
+            where: {
+              id: {
+                not: id,
+              },
 
-            name: {
-              equals: parsed.data.name,
-              mode: 'insensitive',
+              name: {
+                equals: parsed.data.name,
+                mode: 'insensitive',
+              },
             },
-          },
-        });
+          });
 
         if (duplicate) {
           return {
@@ -220,7 +267,7 @@ export async function PUT(
         }
 
         // UPDATE MARKETPLACE
-        // EXISTING SLUG IS PRESERVED
+        // PRESERVE EXISTING SLUG
 
         const marketplace = await tx.marketplace.update({
           where: { id },
@@ -230,13 +277,15 @@ export async function PUT(
 
             ...(parsed.data.badgeText !== undefined
               ? {
-                  badgeText: parsed.data.badgeText || null,
+                  badgeText:
+                    parsed.data.badgeText || null,
                 }
               : {}),
 
             ...(parsed.data.tagline !== undefined
               ? {
-                  tagline: parsed.data.tagline || null,
+                  tagline:
+                    parsed.data.tagline || null,
                 }
               : {}),
 
@@ -249,8 +298,12 @@ export async function PUT(
         await recordAdminAction(
           admin,
           {
-            action: AUDIT_ACTIONS.MARKETPLACE_UPDATED,
-            entityType: AUDIT_ENTITIES.MARKETPLACE,
+            action:
+              AUDIT_ACTIONS.MARKETPLACE_UPDATED,
+
+            entityType:
+              AUDIT_ENTITIES.MARKETPLACE,
+
             entityId: id,
           },
           tx
@@ -258,6 +311,7 @@ export async function PUT(
 
         return {
           outcome: 'UPDATED' as const,
+
           marketplace,
         };
       }
@@ -276,12 +330,16 @@ export async function PUT(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         marketplace: result.marketplace,
-        message: 'Marketplace updated successfully.',
+
+        message:
+          'Marketplace updated successfully.',
       })
     );
 
   } catch (error) {
+
     if (
       typeof error === 'object' &&
       error !== null &&
@@ -295,7 +353,7 @@ export async function PUT(
   }
 }
 
-// ACTIVATE / DEACTIVATE MARKETPLACE
+// ACTIVATE OR DEACTIVATE MARKETPLACE
 // OWNER AND ADMIN ONLY
 
 export async function PATCH(
@@ -303,6 +361,7 @@ export async function PATCH(
   { params }: Context
 ) {
   try {
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.MARKETPLACE_MANAGE,
@@ -315,11 +374,24 @@ export async function PATCH(
     const admin = authorization.user;
     const { id } = await params;
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid marketplace identifier.');
+    }
 
-    const parsed = statusSchema.safeParse(body);
+    // MAXIMUM STATUS REQUEST SIZE: 4 KB
+
+    const body = await readJsonBody(
+      request,
+      4 * 1024
+    );
+
+    if (!body.ok) {
+      return body.response;
+    }
+
+    const parsed = statusSchema.safeParse(
+      body.data
+    );
 
     if (!parsed.success) {
       return badInput(
@@ -333,36 +405,44 @@ export async function PATCH(
     const marketplace = await prisma.$transaction(
       async (tx) => {
 
-        const existing = await tx.marketplace.findUnique({
-          where: { id },
+        const existing =
+          await tx.marketplace.findUnique({
+            where: { id },
 
-          select: {
-            isActive: true,
-          },
-        });
+            select: {
+              isActive: true,
+            },
+          });
 
         if (!existing) {
           return null;
         }
 
-        const updatedMarketplace = await tx.marketplace.update({
-          where: { id },
+        const updatedMarketplace =
+          await tx.marketplace.update({
+            where: { id },
 
-          data: {
-            isActive: parsed.data.isActive,
-          },
-        });
+            data: {
+              isActive: parsed.data.isActive,
+            },
+          });
 
         // RECORD ACTUAL STATUS CHANGE
 
         if (
-          existing.isActive !== updatedMarketplace.isActive
+          existing.isActive !==
+          updatedMarketplace.isActive
         ) {
+
           await recordAdminAction(
             admin,
             {
-              action: AUDIT_ACTIONS.MARKETPLACE_STATUS_CHANGED,
-              entityType: AUDIT_ENTITIES.MARKETPLACE,
+              action:
+                AUDIT_ACTIONS.MARKETPLACE_STATUS_CHANGED,
+
+              entityType:
+                AUDIT_ENTITIES.MARKETPLACE,
+
               entityId: id,
             },
             tx
@@ -382,6 +462,7 @@ export async function PATCH(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         marketplace,
 
         message: parsed.data.isActive
@@ -404,6 +485,7 @@ export async function DELETE(
   { params }: Context
 ) {
   try {
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.MARKETPLACE_MANAGE,
@@ -416,6 +498,10 @@ export async function DELETE(
     const admin = authorization.user;
     const { id } = await params;
 
+    if (!idSchema.safeParse(id).success) {
+      return badInput('Invalid marketplace identifier.');
+    }
+
     // ATOMIC MARKETPLACE DELETION AND AUDIT LOGGING
 
     const removedLinks = await prisma.$transaction(
@@ -423,11 +509,12 @@ export async function DELETE(
 
         // REMOVE PRODUCT-MARKETPLACE LINKS ONLY
 
-        const links = await tx.productMarketplaceLink.deleteMany({
-          where: {
-            marketplaceId: id,
-          },
-        });
+        const links =
+          await tx.productMarketplaceLink.deleteMany({
+            where: {
+              marketplaceId: id,
+            },
+          });
 
         // DELETE MARKETPLACE RECORD
         // NEVER DELETE ACTUAL PRODUCTS
@@ -441,8 +528,12 @@ export async function DELETE(
         await recordAdminAction(
           admin,
           {
-            action: AUDIT_ACTIONS.MARKETPLACE_DELETED,
-            entityType: AUDIT_ENTITIES.MARKETPLACE,
+            action:
+              AUDIT_ACTIONS.MARKETPLACE_DELETED,
+
+            entityType:
+              AUDIT_ENTITIES.MARKETPLACE,
+
             entityId: id,
           },
           tx
@@ -457,8 +548,11 @@ export async function DELETE(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         deleted: true,
+
         deletedProductCount: 0,
+
         removedMarketplaceLinks: removedLinks,
 
         message:

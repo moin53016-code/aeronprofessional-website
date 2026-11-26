@@ -20,6 +20,11 @@ import {
   AUDIT_ENTITIES,
 } from '@/lib/audit-log';
 
+import {
+  readJsonBody,
+  REQUEST_LIMITS,
+} from '@/lib/request-validation';
+
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
@@ -57,7 +62,7 @@ const webUrl = z
         return false;
       }
     },
-    'Invalid website URL'
+    'Invalid website URL.'
   );
 
 // SECURE HTTPS URL VALIDATION
@@ -84,7 +89,7 @@ const httpsUrl = z
         return false;
       }
     },
-    'Please enter a valid HTTPS URL'
+    'Please enter a valid HTTPS URL.'
   );
 
 // TRUSTED WHATSAPP DOMAINS
@@ -106,15 +111,18 @@ const whatsappUrl = httpsUrl.refine(
     try {
       const url = new URL(value);
 
-      return allowedWhatsAppHosts.has(
-        url.hostname.toLowerCase()
+      return (
+        allowedWhatsAppHosts.has(
+          url.hostname.toLowerCase()
+        ) &&
+        url.port === ''
       );
 
     } catch {
       return false;
     }
   },
-  'Please enter a valid WhatsApp URL'
+  'Please enter a valid WhatsApp URL.'
 );
 
 // EMAIL VALIDATION
@@ -131,56 +139,105 @@ const email = z
 const whatsappNumber = z
   .string()
   .trim()
+  .max(15)
   .regex(
     /^(?:[1-9]\d{7,14})?$/,
-    'Enter a valid WhatsApp number with country code'
+    'Enter a valid WhatsApp number with country code.'
   );
 
-// WEBSITE SETTINGS SCHEMA
+// LOCAL LOGO PATH VALIDATION
+
+const localLogoPath = z
+  .string()
+  .trim()
+  .max(2048)
+  .regex(
+    /^\/(?:uploads|images)\/[a-zA-Z0-9._/-]+$/,
+    'Invalid local logo path.'
+  )
+  .refine(
+    (value) =>
+      value.split('/').slice(1).every(
+        (segment) =>
+          segment !== '' &&
+          segment !== '.' &&
+          segment !== '..'
+      ),
+    'Invalid logo path.'
+  );
+
+// WEBSITE SETTINGS VALIDATION
 
 const settingsSchema = z.object({
 
   // BRAND INFORMATION
 
-  brandName: text.optional(),
+  brandName: z
+    .string()
+    .trim()
+    .max(200)
+    .optional(),
 
   // SOCIAL MEDIA
 
   instagramUrl: webUrl.optional(),
 
-  instagramHandle: text.optional(),
+  instagramHandle: z
+    .string()
+    .trim()
+    .max(150)
+    .optional(),
 
   // WHATSAPP SUPPORT
 
-  whatsappNumber: whatsappNumber.optional(),
+  whatsappNumber:
+    whatsappNumber.optional(),
 
-  whatsappMessage: text.optional(),
+  whatsappMessage:
+    text.optional(),
 
-  whatsappUrl: whatsappUrl.optional(),
+  whatsappUrl:
+    whatsappUrl.optional(),
 
   // EMAIL SUPPORT
 
-  contactEmail: email.optional(),
+  contactEmail:
+    email.optional(),
 
-  supportEmail: email.optional(),
+  supportEmail:
+    email.optional(),
 
   // WARRANTY SUPPORT
 
-  warrantySupportUrl: httpsUrl.optional(),
+  warrantySupportUrl:
+    httpsUrl.optional(),
 
   // BUSINESS INFORMATION
 
-  businessPhone: text.optional(),
+  businessPhone: z
+    .string()
+    .trim()
+    .max(100)
+    .optional(),
 
   // FOOTER SETTINGS
 
-  copyrightText: text.optional(),
+  copyrightText: z
+    .string()
+    .trim()
+    .max(500)
+    .optional(),
 
-  footerText: text.optional(),
+  footerText:
+    text.optional(),
 
   // ANNOUNCEMENT BAR
 
-  announcementBarText: text.optional(),
+  announcementBarText: z
+    .string()
+    .trim()
+    .max(1000)
+    .optional(),
 
   announcementBarVisible: z
     .union([
@@ -191,22 +248,27 @@ const settingsSchema = z.object({
 
   // SEO SETTINGS
 
-  seoTitle: text.optional(),
+  seoTitle: z
+    .string()
+    .trim()
+    .max(300)
+    .optional(),
 
-  seoDescription: text.optional(),
+  seoDescription: z
+    .string()
+    .trim()
+    .max(1000)
+    .optional(),
 
   // PRICE DISCLAIMER
 
-  priceDisclaimer: text.optional(),
+  priceDisclaimer:
+    text.optional(),
 
   // BRAND LOGO
 
   logoUrl: webUrl
-    .or(
-      z.string().regex(
-        /^\/(?:uploads|images)\/[a-zA-Z0-9._/-]+$/
-      )
-    )
+    .or(localLogoPath)
     .nullable()
     .optional(),
 });
@@ -214,6 +276,7 @@ const settingsSchema = z.object({
 // LOAD SAVED WEBSITE SETTINGS
 
 async function loadWebsiteSettings() {
+
   const rows = await prisma.siteSetting.findMany({
     orderBy: {
       key: 'asc',
@@ -221,6 +284,7 @@ async function loadWebsiteSettings() {
 
     select: {
       key: true,
+
       value: true,
     },
   });
@@ -228,6 +292,7 @@ async function loadWebsiteSettings() {
   return Object.fromEntries(
     rows.map((row) => [
       row.key,
+
       row.value ?? '',
     ])
   );
@@ -238,8 +303,10 @@ async function loadWebsiteSettings() {
 
 export async function GET(request: NextRequest) {
   try {
+
     const denied = await adminDenied({
       request,
+
       permission: PERMISSIONS.SETTINGS_VIEW,
     });
 
@@ -252,6 +319,7 @@ export async function GET(request: NextRequest) {
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         settings,
       })
     );
@@ -267,10 +335,11 @@ export async function GET(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
 
-    // VERIFY ADMIN AND SETTINGS MANAGEMENT PERMISSION
+    // VERIFY ADMIN PERMISSION
 
     const authorization = await authorizeAdmin({
       request,
+
       permission: PERMISSIONS.SETTINGS_MANAGE,
     });
 
@@ -280,18 +349,40 @@ export async function PATCH(request: NextRequest) {
 
     const admin = authorization.user;
 
-    // VALIDATE REQUEST BODY
+    // CENTRALIZED REQUEST BODY PROTECTION
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    const body = await readJsonBody(
+      request,
+      REQUEST_LIMITS.SETTINGS
+    );
+
+    if (!body.ok) {
+      return body.response;
+    }
+
+    // SUPPORT EXISTING SETTINGS REQUEST FORMAT
+
+    const payload = body.data;
+
+    const settingsInput =
+      typeof payload === 'object' &&
+      payload !== null &&
+      !Array.isArray(payload) &&
+      'settings' in payload
+        ? payload.settings
+        : payload;
+
+    // VALIDATE WEBSITE SETTINGS
 
     const parsed = settingsSchema.safeParse(
-      body?.settings ?? body
+      settingsInput
     );
 
     if (!parsed.success) {
-      const details = z.flattenError(parsed.error);
+
+      const details = z.flattenError(
+        parsed.error
+      );
 
       const fieldErrors = Object.values(
         details.fieldErrors
@@ -300,6 +391,7 @@ export async function PATCH(request: NextRequest) {
       return badInput(
         fieldErrors[0] ||
           'Invalid website settings.',
+
         details
       );
     }
@@ -311,6 +403,8 @@ export async function PATCH(request: NextRequest) {
     ).filter(
       ([, value]) => value !== undefined
     );
+
+    // REJECT EMPTY UPDATES
 
     if (entries.length === 0) {
       return badInput(
@@ -325,22 +419,27 @@ export async function PATCH(request: NextRequest) {
 
         // LOAD EXISTING SETTINGS
 
-        const existingRows = await tx.siteSetting.findMany({
-          where: {
-            key: {
-              in: entries.map(([key]) => key),
+        const existingRows =
+          await tx.siteSetting.findMany({
+            where: {
+              key: {
+                in: entries.map(
+                  ([key]) => key
+                ),
+              },
             },
-          },
 
-          select: {
-            key: true,
-            value: true,
-          },
-        });
+            select: {
+              key: true,
+
+              value: true,
+            },
+          });
 
         const existingSettings = new Map(
           existingRows.map((row) => [
             row.key,
+
             row.value,
           ])
         );
@@ -372,6 +471,7 @@ export async function PATCH(request: NextRequest) {
 
             create: {
               key,
+
               value: storedValue,
             },
 
@@ -381,19 +481,28 @@ export async function PATCH(request: NextRequest) {
           });
 
           // RECORD VERIFIED ADMIN ACTIVITY
-          // STORE SETTING KEY ONLY
           // NEVER STORE SETTING VALUES IN AUDIT LOGS
 
           await recordAdminAction(
             admin,
             {
-              action: AUDIT_ACTIONS.SETTINGS_UPDATED,
-              entityType: AUDIT_ENTITIES.SETTINGS,
+              action:
+                AUDIT_ACTIONS.SETTINGS_UPDATED,
+
+              entityType:
+                AUDIT_ENTITIES.SETTINGS,
+
               entityId: key,
             },
             tx
           );
         }
+      },
+
+      {
+        maxWait: 10000,
+
+        timeout: 30000,
       }
     );
 
@@ -412,7 +521,10 @@ export async function PATCH(request: NextRequest) {
     return secureAdminResponse(
       NextResponse.json({
         success: true,
-        message: 'Website settings saved successfully.',
+
+        message:
+          'Website settings saved successfully.',
+
         settings,
       })
     );

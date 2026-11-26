@@ -1,9 +1,6 @@
-import {
-  NextRequest,
-  NextResponse,
-} from 'next/server';
-
+import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+
 import { prisma } from '@/lib/db';
 import { PERMISSIONS } from '@/lib/permissions';
 
@@ -22,27 +19,103 @@ import {
   AUDIT_ENTITIES,
 } from '@/lib/audit-log';
 
+import {
+  readJsonBody,
+  REQUEST_LIMITS,
+} from '@/lib/request-validation';
+
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+
+// CATEGORY IMAGE URL VALIDATION
+
+const imageUrlSchema = z
+  .string()
+  .trim()
+  .max(2048)
+  .refine(
+    (value) => {
+      if (value === '') {
+        return true;
+      }
+
+      if (
+        /^\/(?:uploads|images)\/[a-zA-Z0-9._-]+$/.test(value)
+      ) {
+        return true;
+      }
+
+      try {
+        const url = new URL(value);
+
+        return (
+          (
+            url.protocol === 'https:' ||
+            url.protocol === 'http:'
+          ) &&
+          Boolean(url.hostname) &&
+          !url.username &&
+          !url.password
+        );
+
+      } catch {
+        return false;
+      }
+    },
+    'Enter a valid image URL or local image path.'
+  );
 
 // CATEGORY VALIDATION
 
 const createCategorySchema = z.object({
-  name: z.string().trim().min(1),
 
-  slug: z.string().trim().min(1),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200),
 
-  label: z.string().trim().min(1),
+  slug: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .regex(
+      /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+      'Invalid category slug.'
+    ),
 
-  description: z.string().nullable().optional(),
+  label: z
+    .string()
+    .trim()
+    .min(1)
+    .max(150),
 
-  imageUrl: z.string().nullable().optional(),
+  description: z
+    .string()
+    .trim()
+    .max(5000)
+    .nullable()
+    .optional(),
 
-  displayOrder: z.number().int().default(0),
+  imageUrl: imageUrlSchema
+    .nullable()
+    .optional(),
 
-  isVisible: z.boolean().default(true),
+  displayOrder: z
+    .number()
+    .int()
+    .min(-2147483648)
+    .max(2147483647)
+    .default(0),
 
-  isPublished: z.boolean().default(true),
+  isVisible: z
+    .boolean()
+    .default(true),
+
+  isPublished: z
+    .boolean()
+    .default(true),
 });
 
 // GET ALL CATEGORIES
@@ -95,7 +168,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
 
-    // VERIFY ADMIN AND CATEGORY MANAGEMENT PERMISSION
+    // VERIFY ADMIN PERMISSION
 
     const authorization = await authorizeAdmin({
       request,
@@ -108,14 +181,22 @@ export async function POST(request: NextRequest) {
 
     const admin = authorization.user;
 
-    // VALIDATE REQUEST BODY
+    // CENTRALIZED REQUEST BODY PROTECTION
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    const body = await readJsonBody(
+      request,
+      REQUEST_LIMITS.JSON
+    );
 
-    const result =
-      createCategorySchema.safeParse(body);
+    if (!body.ok) {
+      return body.response;
+    }
+
+    // VALIDATE CATEGORY INPUT
+
+    const result = createCategorySchema.safeParse(
+      body.data
+    );
 
     if (!result.success) {
       return badInput(
@@ -132,8 +213,6 @@ export async function POST(request: NextRequest) {
         const createdCategory = await tx.category.create({
           data: result.data,
         });
-
-        // RECORD VERIFIED ADMIN ACTIVITY
 
         await recordAdminAction(
           admin,

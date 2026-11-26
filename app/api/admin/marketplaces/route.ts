@@ -19,12 +19,44 @@ import {
   AUDIT_ENTITIES,
 } from '@/lib/audit-log';
 
+import {
+  readJsonBody,
+  REQUEST_LIMITS,
+} from '@/lib/request-validation';
+
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+
+// MARKETPLACE URL VALIDATION
+
+const marketplaceUrlSchema = z
+  .string()
+  .trim()
+  .max(2048)
+  .url('Enter a valid marketplace URL')
+  .refine(
+    (value) => {
+      try {
+        const url = new URL(value);
+
+        return (
+          url.protocol === 'https:' &&
+          Boolean(url.hostname) &&
+          !url.username &&
+          !url.password
+        );
+
+      } catch {
+        return false;
+      }
+    },
+    'Marketplace URL must be a valid HTTPS link.'
+  );
 
 // MARKETPLACE VALIDATION
 
 const marketplaceSchema = z.object({
+
   name: z
     .string()
     .trim()
@@ -56,27 +88,7 @@ const marketplaceSchema = z.object({
     .nullable()
     .optional(),
 
-  url: z
-    .string()
-    .trim()
-    .max(2048)
-    .url('Enter a valid marketplace URL')
-    .refine(
-      (value) => {
-        try {
-          const url = new URL(value);
-
-          return (
-            url.protocol === 'https:' &&
-            !url.username &&
-            !url.password
-          );
-        } catch {
-          return false;
-        }
-      },
-      'Marketplace URL must be a valid HTTPS link'
-    ),
+  url: marketplaceUrlSchema,
 });
 
 // DUPLICATE MARKETPLACE RESPONSE
@@ -86,6 +98,7 @@ function duplicateMarketplace() {
     NextResponse.json(
       {
         success: false,
+
         error:
           'A marketplace with this name or slug already exists.',
       },
@@ -100,6 +113,7 @@ function duplicateMarketplace() {
 
 export async function GET(request: NextRequest) {
   try {
+
     const denied = await adminDenied({
       request,
       permission: PERMISSIONS.MARKETPLACE_VIEW,
@@ -138,7 +152,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
 
-    // VERIFY ADMIN AND MARKETPLACE PERMISSION
+    // VERIFY ADMIN PERMISSION
 
     const authorization = await authorizeAdmin({
       request,
@@ -151,13 +165,22 @@ export async function POST(request: NextRequest) {
 
     const admin = authorization.user;
 
-    // VALIDATE REQUEST BODY
+    // CENTRALIZED REQUEST BODY PROTECTION
 
-    const body = await request
-      .json()
-      .catch(() => null);
+    const body = await readJsonBody(
+      request,
+      REQUEST_LIMITS.JSON
+    );
 
-    const parsed = marketplaceSchema.safeParse(body);
+    if (!body.ok) {
+      return body.response;
+    }
+
+    // VALIDATE MARKETPLACE INPUT
+
+    const parsed = marketplaceSchema.safeParse(
+      body.data
+    );
 
     if (!parsed.success) {
       return badInput(
@@ -208,10 +231,15 @@ export async function POST(request: NextRequest) {
           await tx.marketplace.create({
             data: {
               name,
+
               slug,
+
               badgeText: badgeText || null,
+
               tagline: tagline || null,
+
               url,
+
               isActive: true,
             },
           });
@@ -221,9 +249,14 @@ export async function POST(request: NextRequest) {
         await recordAdminAction(
           admin,
           {
-            action: AUDIT_ACTIONS.MARKETPLACE_CREATED,
-            entityType: AUDIT_ENTITIES.MARKETPLACE,
-            entityId: createdMarketplace.id,
+            action:
+              AUDIT_ACTIONS.MARKETPLACE_CREATED,
+
+            entityType:
+              AUDIT_ENTITIES.MARKETPLACE,
+
+            entityId:
+              createdMarketplace.id,
           },
           tx
         );
@@ -244,8 +277,11 @@ export async function POST(request: NextRequest) {
       NextResponse.json(
         {
           success: true,
+
           marketplace,
-          message: 'Marketplace created successfully.',
+
+          message:
+            'Marketplace created successfully.',
         },
         {
           status: 201,
