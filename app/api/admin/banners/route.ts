@@ -1,20 +1,39 @@
+import {
+  NextRequest,
+  NextResponse,
+} from 'next/server';
 
-import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+
 import { z } from 'zod';
+
+import { PERMISSIONS } from '@/lib/permissions';
 
 import {
   adminDenied,
   apiError,
   badInput,
   refreshAdmin,
+  secureAdminResponse,
 } from '@/lib/admin-api';
 
+// ==========================================
+// ROUTE CONFIGURATION
+// ==========================================
+
+export const dynamic = 'force-dynamic';
+
+export const revalidate = 0;
+
+// ==========================================
 // IMAGE URL VALIDATION
+// ==========================================
 
 const imageUrlSchema = z.string().trim().refine(
   (value) => {
-    if (/^\/(?:uploads|images)\/[a-zA-Z0-9._-]+$/.test(value)) {
+    if (
+      /^\/(?:uploads|images)\/[a-zA-Z0-9._-]+$/.test(value)
+    ) {
       return true;
     }
 
@@ -25,6 +44,7 @@ const imageUrlSchema = z.string().trim().refine(
         url.protocol === 'https:' ||
         url.protocol === 'http:'
       );
+
     } catch {
       return false;
     }
@@ -32,7 +52,9 @@ const imageUrlSchema = z.string().trim().refine(
   'Enter a valid image URL or local image path.'
 );
 
+// ==========================================
 // BANNER VALIDATION
+// ==========================================
 
 const createBannerSchema = z.object({
   eyebrow: z
@@ -94,13 +116,32 @@ const createBannerSchema = z.object({
     .optional(),
 });
 
+// ==========================================
 // GET ALL HOMEPAGE BANNERS
+// ==========================================
 
-export async function GET() {
+export async function GET(
+  request: NextRequest
+) {
   try {
-    const denied = await adminDenied();
+    // ======================================
+    // AUTHENTICATION AND VIEW PERMISSION
+    // ======================================
 
-    if (denied) return denied;
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.BANNER_VIEW,
+    });
+
+    if (denied) {
+      return denied;
+    }
+
+    // ======================================
+    // FETCH HOMEPAGE BANNERS
+    // ======================================
 
     const banners =
       await prisma.homepageBanner.findMany({
@@ -108,34 +149,67 @@ export async function GET() {
           {
             displayOrder: 'asc',
           },
+
           {
             createdAt: 'desc',
           },
         ],
       });
 
-    return NextResponse.json({
-      success: true,
-      banners,
-    });
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        banners,
+      })
+    );
+
   } catch (error) {
-    return apiError(error, 'Banner');
+    return apiError(
+      error,
+      'Banner'
+    );
   }
 }
 
+// ==========================================
 // CREATE NEW HOMEPAGE BANNER
+// ==========================================
 
 export async function POST(
   request: NextRequest
 ) {
   try {
-    const denied = await adminDenied();
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
 
-    if (denied) return denied;
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.BANNER_MANAGE,
+    });
+
+    if (denied) {
+      return denied;
+    }
+
+    // ======================================
+    // PARSE REQUEST BODY
+    // ======================================
 
     const body = await request
       .json()
       .catch(() => null);
+
+    // ======================================
+    // VALIDATE BANNER INPUT
+    // ======================================
 
     const parsed =
       createBannerSchema.safeParse(body);
@@ -143,7 +217,8 @@ export async function POST(
     if (!parsed.success) {
       return badInput(
         'Invalid banner data.',
-        parsed.error.flatten()
+
+        z.flattenError(parsed.error)
       );
     }
 
@@ -154,7 +229,9 @@ export async function POST(
       ...data
     } = parsed.data;
 
+    // ======================================
     // VALIDATE BANNER SCHEDULE
+    // ======================================
 
     const startDate = startsAt
       ? new Date(startsAt)
@@ -174,7 +251,9 @@ export async function POST(
       );
     }
 
-    // CREATE BANNER
+    // ======================================
+    // CREATE HOMEPAGE BANNER
+    // ======================================
 
     const banner =
       await prisma.homepageBanner.create({
@@ -191,26 +270,41 @@ export async function POST(
             data.buttonTarget || 'Shop All',
 
           startsAt: startDate,
+
           endsAt: endDate,
         },
       });
 
+    // ======================================
     // REFRESH WEBSITE AND ADMIN PANEL
+    // ======================================
 
     refreshAdmin('/admin/banners');
 
-    return NextResponse.json(
-      {
-        success: true,
-        banner,
-        message:
-          'Homepage banner created successfully.',
-      },
-      {
-        status: 201,
-      }
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json(
+        {
+          success: true,
+
+          banner,
+
+          message:
+            'Homepage banner created successfully.',
+        },
+        {
+          status: 201,
+        }
+      )
     );
+
   } catch (error) {
-    return apiError(error, 'Banner');
+    return apiError(
+      error,
+      'Banner'
+    );
   }
 }

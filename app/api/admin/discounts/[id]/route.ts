@@ -1,23 +1,92 @@
+import {
+  NextRequest,
+  NextResponse,
+} from 'next/server';
 
-import { NextRequest, NextResponse } from 'next/server';
-import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
+
 import { prisma } from '@/lib/db';
-import { getSession } from '@/lib/auth';
+
+import { PERMISSIONS } from '@/lib/permissions';
+
+import {
+  adminDenied,
+  apiError,
+  badInput,
+  refreshAdmin,
+  secureAdminResponse,
+} from '@/lib/admin-api';
+
+// ==========================================
+// ROUTE CONFIGURATION
+// ==========================================
+
+export const dynamic = 'force-dynamic';
+
+export const revalidate = 0;
+
+// ==========================================
+// ROUTE CONTEXT
+// ==========================================
 
 type Context = {
   params: Promise<{ id: string }>;
 };
 
+// ==========================================
+// DISCOUNT UPDATE VALIDATION
+// ==========================================
+
 const updateSchema = z.object({
-  name: z.string().trim().min(1).optional(),
-  description: z.string().nullable().optional(),
-  discountLabel: z.string().nullable().optional(),
-  isActive: z.boolean().optional(),
-  startsAt: z.string().datetime({ offset: true }).nullable().optional(),
-  endsAt: z.string().datetime({ offset: true }).nullable().optional(),
-  productIds: z.array(z.string().min(1)).optional(),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional(),
+
+  description: z
+    .string()
+    .nullable()
+    .optional(),
+
+  discountLabel: z
+    .string()
+    .nullable()
+    .optional(),
+
+  isActive: z
+    .boolean()
+    .optional(),
+
+  startsAt: z
+    .string()
+    .datetime({ offset: true })
+    .nullable()
+    .optional(),
+
+  endsAt: z
+    .string()
+    .datetime({ offset: true })
+    .nullable()
+    .optional(),
+
+  productIds: z
+    .array(z.string().min(1))
+    .optional(),
 });
+
+// ==========================================
+// DISCOUNT STATUS VALIDATION
+// ==========================================
+
+const statusSchema = z.object({
+  isActive: z.boolean(),
+});
+
+// ==========================================
+// INCLUDE RELATED PRODUCTS
+// ==========================================
 
 const includeProducts = {
   discountProducts: {
@@ -27,101 +96,179 @@ const includeProducts = {
   },
 } as const;
 
-function unauthorized() {
-  return NextResponse.json(
-    { error: 'Unauthorized. Please log in.' },
-    { status: 401 }
+// ==========================================
+// DISCOUNT NOT FOUND RESPONSE
+// ==========================================
+
+function discountNotFound() {
+  return secureAdminResponse(
+    NextResponse.json(
+      {
+        success: false,
+
+        error: 'Discount campaign not found.',
+      },
+      {
+        status: 404,
+      }
+    )
   );
 }
 
-function refreshPages() {
-  revalidatePath('/');
-  revalidatePath('/admin/discounts');
-  revalidatePath('/admin');
-}
+// ==========================================
+// CENTRALIZED DISCOUNT ERROR HANDLING
+// ==========================================
 
-function handleError(error: unknown) {
-  console.error('Discount campaign API error:', error);
-
-  const code =
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error
-      ? error.code
-      : undefined;
-
-  if (code === 'P2025') {
-    return NextResponse.json(
-      { error: 'Discount campaign not found.' },
-      { status: 404 }
-    );
-  }
-
-  if (code === 'P2003') {
-    return NextResponse.json(
-      { error: 'One or more selected products do not exist.' },
-      { status: 400 }
-    );
-  }
-
-  return NextResponse.json(
-    { error: 'Unable to process discount campaign.' },
-    { status: 500 }
-  );
-}
-
-// GET CAMPAIGN
-
-export async function GET(
-  _request: NextRequest,
-  { params }: Context
+function handleDiscountError(
+  error: unknown
 ) {
-  try {
-    if (!(await getSession())) return unauthorized();
+  if (error instanceof Error) {
+    if (
+      error.message === 'CAMPAIGN_NOT_FOUND'
+    ) {
+      return discountNotFound();
+    }
 
-    const { id } = await params;
-
-    const discount = await prisma.discountCampaign.findUnique({
-      where: { id },
-      include: includeProducts,
-    });
-
-    if (!discount) {
-      return NextResponse.json(
-        { error: 'Discount campaign not found.' },
-        { status: 404 }
+    if (
+      error.message === 'INVALID_DATE_RANGE'
+    ) {
+      return badInput(
+        'End date must not be before start date.'
       );
     }
 
-    return NextResponse.json({
-      success: true,
-      discount,
+    if (
+      error.message === 'INVALID_PRODUCTS'
+    ) {
+      return badInput(
+        'One or more selected products no longer exist.'
+      );
+    }
+  }
+
+  return apiError(
+    error,
+    'Discount campaign'
+  );
+}
+
+// ==========================================
+// GET INDIVIDUAL DISCOUNT CAMPAIGN
+// ==========================================
+
+export async function GET(
+  request: NextRequest,
+  { params }: Context
+) {
+  try {
+    // ======================================
+    // AUTHENTICATION AND VIEW PERMISSION
+    // ======================================
+
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.DISCOUNT_VIEW,
     });
+
+    if (denied) {
+      return denied;
+    }
+
+    const { id } = await params;
+
+    // ======================================
+    // FETCH CAMPAIGN AND RELATED PRODUCTS
+    // ======================================
+
+    const discount =
+      await prisma.discountCampaign.findUnique({
+        where: {
+          id,
+        },
+
+        include: includeProducts,
+      });
+
+    if (!discount) {
+      return discountNotFound();
+    }
+
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        discount,
+      })
+    );
+
   } catch (error) {
-    return handleError(error);
+    return handleDiscountError(error);
   }
 }
 
-// EDIT CAMPAIGN
+// ==========================================
+// UPDATE DISCOUNT CAMPAIGN
+// OWNER AND ADMIN ONLY
+// ==========================================
 
 export async function PUT(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    if (!(await getSession())) return unauthorized();
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
+
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.DISCOUNT_MANAGE,
+    });
+
+    if (denied) {
+      return denied;
+    }
 
     const { id } = await params;
-    const body = await request.json().catch(() => null);
-    const parsed = updateSchema.safeParse(body);
+
+    // ======================================
+    // PARSE REQUEST BODY
+    // ======================================
+
+    const body = await request
+      .json()
+      .catch(() => null);
+
+    // ======================================
+    // VALIDATE UPDATE INPUT
+    // ======================================
+
+    const parsed =
+      updateSchema.safeParse(body);
 
     if (!parsed.success) {
-      return NextResponse.json(
-        {
-          error: 'Invalid discount campaign data.',
-          details: parsed.error.flatten(),
-        },
-        { status: 400 }
+      return badInput(
+        'Invalid discount campaign data.',
+
+        z.flattenError(parsed.error)
+      );
+    }
+
+    // REJECT EMPTY UPDATE REQUESTS
+
+    if (
+      Object.keys(parsed.data).length === 0
+    ) {
+      return badInput(
+        'No discount campaign changes provided.'
       );
     }
 
@@ -132,166 +279,331 @@ export async function PUT(
       ...data
     } = parsed.data;
 
-    const discount = await prisma.$transaction(
-      async (tx) => {
-        const existing = await tx.discountCampaign.findUnique({
-          where: { id },
-        });
+    // ======================================
+    // PREVENT DUPLICATE PRODUCT ASSIGNMENTS
+    // ======================================
 
-        if (!existing) {
-          throw new Error('CAMPAIGN_NOT_FOUND');
-        }
+    const uniqueProductIds =
+      productIds === undefined
+        ? undefined
+        : [...new Set(productIds)];
 
-        const start =
-          startsAt === undefined
-            ? existing.startsAt
-            : startsAt
-              ? new Date(startsAt)
-              : null;
+    // ======================================
+    // ATOMIC DATABASE TRANSACTION
+    // ======================================
 
-        const end =
-          endsAt === undefined
-            ? existing.endsAt
-            : endsAt
-              ? new Date(endsAt)
-              : null;
+    const discount =
+      await prisma.$transaction(
+        async (tx) => {
 
-        if (start && end && end < start) {
-          throw new Error('INVALID_DATE_RANGE');
-        }
+          // FETCH EXISTING CAMPAIGN
 
-        await tx.discountCampaign.update({
-          where: { id },
-          data: {
-            ...data,
-            startsAt: start,
-            endsAt: end,
-          },
-        });
+          const existing =
+            await tx.discountCampaign.findUnique({
+              where: {
+                id,
+              },
+            });
 
-        if (productIds !== undefined) {
-          await tx.discountProduct.deleteMany({
-            where: { campaignId: id },
+          if (!existing) {
+            throw new Error(
+              'CAMPAIGN_NOT_FOUND'
+            );
+          }
+
+          // ==================================
+          // PRESERVE EXISTING CAMPAIGN DATES
+          // ==================================
+
+          const startDate =
+            startsAt === undefined
+              ? existing.startsAt
+              : startsAt
+                ? new Date(startsAt)
+                : null;
+
+          const endDate =
+            endsAt === undefined
+              ? existing.endsAt
+              : endsAt
+                ? new Date(endsAt)
+                : null;
+
+          // ==================================
+          // VALIDATE CAMPAIGN DATE RANGE
+          // ==================================
+
+          if (
+            startDate &&
+            endDate &&
+            endDate < startDate
+          ) {
+            throw new Error(
+              'INVALID_DATE_RANGE'
+            );
+          }
+
+          // ==================================
+          // VERIFY SELECTED PRODUCTS EXIST
+          // ==================================
+
+          if (
+            uniqueProductIds !== undefined &&
+            uniqueProductIds.length > 0
+          ) {
+            const existingProducts =
+              await tx.product.count({
+                where: {
+                  id: {
+                    in: uniqueProductIds,
+                  },
+                },
+              });
+
+            if (
+              existingProducts !==
+              uniqueProductIds.length
+            ) {
+              throw new Error(
+                'INVALID_PRODUCTS'
+              );
+            }
+          }
+
+          // ==================================
+          // UPDATE DISCOUNT CAMPAIGN
+          // ==================================
+
+          await tx.discountCampaign.update({
+            where: {
+              id,
+            },
+
+            data: {
+              ...data,
+
+              startsAt: startDate,
+
+              endsAt: endDate,
+            },
           });
 
-          const uniqueIds = [...new Set(productIds)];
+          // ==================================
+          // UPDATE CAMPAIGN PRODUCT ASSIGNMENTS
+          // ==================================
 
-          if (uniqueIds.length > 0) {
-            await tx.discountProduct.createMany({
-              data: uniqueIds.map((productId) => ({
+          if (
+            uniqueProductIds !== undefined
+          ) {
+            // REMOVE PREVIOUS ASSIGNMENTS ONLY
+
+            await tx.discountProduct.deleteMany({
+              where: {
                 campaignId: id,
-                productId,
-              })),
+              },
             });
-          }
-        }
 
-        return tx.discountCampaign.findUniqueOrThrow({
-          where: { id },
-          include: includeProducts,
-        });
-      }
+            // CREATE UPDATED ASSIGNMENTS
+
+            if (
+              uniqueProductIds.length > 0
+            ) {
+              await tx.discountProduct.createMany({
+                data: uniqueProductIds.map(
+                  (productId) => ({
+                    campaignId: id,
+
+                    productId,
+                  })
+                ),
+              });
+            }
+          }
+
+          // ==================================
+          // RETURN UPDATED CAMPAIGN
+          // ==================================
+
+          return tx.discountCampaign.findUniqueOrThrow({
+            where: {
+              id,
+            },
+
+            include: includeProducts,
+          });
+        }
+      );
+
+    // ======================================
+    // REFRESH WEBSITE AND ADMIN PANEL
+    // ======================================
+
+    refreshAdmin('/admin/discounts');
+
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        discount,
+
+        message:
+          'Discount campaign updated successfully.',
+      })
     );
 
-    refreshPages();
-
-    return NextResponse.json({
-      success: true,
-      discount,
-    });
   } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message === 'CAMPAIGN_NOT_FOUND'
-    ) {
-      return NextResponse.json(
-        { error: 'Discount campaign not found.' },
-        { status: 404 }
-      );
-    }
-
-    if (
-      error instanceof Error &&
-      error.message === 'INVALID_DATE_RANGE'
-    ) {
-      return NextResponse.json(
-        { error: 'End date must not be before start date.' },
-        { status: 400 }
-      );
-    }
-
-    return handleError(error);
+    return handleDiscountError(error);
   }
 }
 
-// ACTIVATE / DEACTIVATE
+// ==========================================
+// ACTIVATE / DEACTIVATE DISCOUNT CAMPAIGN
+// OWNER AND ADMIN ONLY
+// ==========================================
 
 export async function PATCH(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    if (!(await getSession())) return unauthorized();
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
+
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.DISCOUNT_MANAGE,
+    });
+
+    if (denied) {
+      return denied;
+    }
 
     const { id } = await params;
-    const body = await request.json().catch(() => null);
 
-    const parsed = z.object({
-      isActive: z.boolean(),
-    }).safeParse(body);
+    // ======================================
+    // VALIDATE CAMPAIGN STATUS
+    // ======================================
+
+    const body = await request
+      .json()
+      .catch(() => null);
+
+    const parsed =
+      statusSchema.safeParse(body);
 
     if (!parsed.success) {
-      return NextResponse.json(
-        { error: 'Invalid campaign status.' },
-        { status: 400 }
+      return badInput(
+        'Invalid campaign status.'
       );
     }
 
-    const discount = await prisma.discountCampaign.update({
-      where: { id },
-      data: {
-        isActive: parsed.data.isActive,
-      },
-      include: includeProducts,
-    });
+    // ======================================
+    // UPDATE CAMPAIGN STATUS
+    // ======================================
 
-    refreshPages();
+    const discount =
+      await prisma.discountCampaign.update({
+        where: {
+          id,
+        },
 
-    return NextResponse.json({
-      success: true,
-      discount,
-    });
+        data: {
+          isActive:
+            parsed.data.isActive,
+        },
+
+        include: includeProducts,
+      });
+
+    // ======================================
+    // REFRESH WEBSITE AND ADMIN PANEL
+    // ======================================
+
+    refreshAdmin('/admin/discounts');
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        discount,
+
+        message:
+          'Discount campaign status updated successfully.',
+      })
+    );
+
   } catch (error) {
-    return handleError(error);
+    return handleDiscountError(error);
   }
 }
 
-// DELETE CAMPAIGN ONLY
+// ==========================================
+// PERMANENTLY DELETE DISCOUNT CAMPAIGN
+// OWNER AND ADMIN ONLY
+// ==========================================
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: Context
 ) {
   try {
-    if (!(await getSession())) return unauthorized();
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
+
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.DISCOUNT_MANAGE,
+    });
+
+    if (denied) {
+      return denied;
+    }
 
     const { id } = await params;
 
-    // Prisma cascade removes DiscountProduct associations.
-    // Product records themselves remain untouched.
+    // ======================================
+    // DELETE CAMPAIGN AND ITS ASSOCIATIONS
+    // NEVER DELETE ACTUAL PRODUCT RECORDS
+    // ======================================
 
     await prisma.discountCampaign.delete({
-      where: { id },
+      where: {
+        id,
+      },
     });
 
-    refreshPages();
+    // ======================================
+    // REFRESH WEBSITE AND ADMIN PANEL
+    // ======================================
 
-    return NextResponse.json({
-      success: true,
-      deleted: true,
-      message: 'Discount campaign deleted. Products preserved.',
-    });
+    refreshAdmin('/admin/discounts');
+
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        deleted: true,
+
+        message:
+          'Discount campaign deleted. Products preserved.',
+      })
+    );
+
   } catch (error) {
-    return handleError(error);
+    return handleDiscountError(error);
   }
 }

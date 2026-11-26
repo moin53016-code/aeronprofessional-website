@@ -1,25 +1,47 @@
-
-import { NextRequest, NextResponse } from 'next/server';
-
 import {
-  revalidatePath,
-  revalidateTag,
-} from 'next/cache';
+  NextRequest,
+  NextResponse,
+} from 'next/server';
+
+import { revalidateTag } from 'next/cache';
 
 import { z } from 'zod';
 
 import { prisma } from '@/lib/db';
-import { getSession } from '@/lib/auth';
 
+import { PERMISSIONS } from '@/lib/permissions';
+
+import {
+  adminDenied,
+  apiError,
+  badInput,
+  refreshAdmin,
+  secureAdminResponse,
+} from '@/lib/admin-api';
+
+// ==========================================
+// ROUTE CONFIGURATION
+// ==========================================
+
+export const dynamic = 'force-dynamic';
+
+export const revalidate = 0;
+
+// ==========================================
 // COMMON TEXT VALIDATION
+// ==========================================
 
-const text = z.string()
+const text = z
+  .string()
   .trim()
   .max(5000);
 
+// ==========================================
 // GENERAL WEBSITE URL VALIDATION
+// ==========================================
 
-const webUrl = z.string()
+const webUrl = z
+  .string()
   .trim()
   .max(2048)
   .refine(
@@ -38,6 +60,7 @@ const webUrl = z.string()
             url.protocol === 'http:'
           )
         );
+
       } catch {
         return false;
       }
@@ -45,9 +68,12 @@ const webUrl = z.string()
     'Invalid website URL'
   );
 
+// ==========================================
 // SECURE HTTPS URL VALIDATION
+// ==========================================
 
-const httpsUrl = z.string()
+const httpsUrl = z
+  .string()
   .trim()
   .max(2048)
   .refine(
@@ -63,6 +89,7 @@ const httpsUrl = z.string()
           !url.username &&
           !url.password
         );
+
       } catch {
         return false;
       }
@@ -70,7 +97,9 @@ const httpsUrl = z.string()
     'Please enter a valid HTTPS URL'
   );
 
-// WHATSAPP URL VALIDATION
+// ==========================================
+// TRUSTED WHATSAPP DOMAINS
+// ==========================================
 
 const allowedWhatsAppHosts = new Set([
   'wa.me',
@@ -79,6 +108,10 @@ const allowedWhatsAppHosts = new Set([
   'whatsapp.com',
   'www.whatsapp.com',
 ]);
+
+// ==========================================
+// WHATSAPP URL VALIDATION
+// ==========================================
 
 const whatsappUrl = httpsUrl.refine(
   (value) => {
@@ -90,6 +123,7 @@ const whatsappUrl = httpsUrl.refine(
       return allowedWhatsAppHosts.has(
         url.hostname.toLowerCase()
       );
+
     } catch {
       return false;
     }
@@ -97,38 +131,55 @@ const whatsappUrl = httpsUrl.refine(
   'Please enter a valid WhatsApp URL'
 );
 
+// ==========================================
 // EMAIL VALIDATION
+// ==========================================
 
-const email = z.string()
+const email = z
+  .string()
   .trim()
   .max(254)
   .email()
   .or(z.literal(''));
 
+// ==========================================
 // WHATSAPP NUMBER VALIDATION
+// ==========================================
 
-const whatsappNumber = z.string()
+const whatsappNumber = z
+  .string()
   .trim()
   .regex(
     /^(?:[1-9]\d{7,14})?$/,
     'Enter a valid WhatsApp number with country code'
   );
 
+// ==========================================
 // WEBSITE SETTINGS SCHEMA
+// ==========================================
 
 const settingsSchema = z.object({
 
+  // ========================================
   // BRAND INFORMATION
+  // ========================================
 
-  brandName: text.optional(),
+  brandName:
+    text.optional(),
 
+  // ========================================
   // SOCIAL MEDIA
+  // ========================================
 
-  instagramUrl: webUrl.optional(),
+  instagramUrl:
+    webUrl.optional(),
 
-  instagramHandle: text.optional(),
+  instagramHandle:
+    text.optional(),
 
+  // ========================================
   // WHATSAPP SUPPORT
+  // ========================================
 
   whatsappNumber:
     whatsappNumber.optional(),
@@ -139,7 +190,9 @@ const settingsSchema = z.object({
   whatsappUrl:
     whatsappUrl.optional(),
 
+  // ========================================
   // EMAIL SUPPORT
+  // ========================================
 
   contactEmail:
     email.optional(),
@@ -147,17 +200,23 @@ const settingsSchema = z.object({
   supportEmail:
     email.optional(),
 
+  // ========================================
   // WARRANTY SUPPORT
+  // ========================================
 
   warrantySupportUrl:
     httpsUrl.optional(),
 
+  // ========================================
   // BUSINESS INFORMATION
+  // ========================================
 
   businessPhone:
     text.optional(),
 
+  // ========================================
   // FOOTER SETTINGS
+  // ========================================
 
   copyrightText:
     text.optional(),
@@ -165,17 +224,23 @@ const settingsSchema = z.object({
   footerText:
     text.optional(),
 
+  // ========================================
   // ANNOUNCEMENT BAR
+  // ========================================
 
   announcementBarText:
     text.optional(),
 
-  announcementBarVisible: z.union([
-    z.boolean(),
-    z.enum(['true', 'false']),
-  ]).optional(),
+  announcementBarVisible: z
+    .union([
+      z.boolean(),
+      z.enum(['true', 'false']),
+    ])
+    .optional(),
 
+  // ========================================
   // SEO SETTINGS
+  // ========================================
 
   seoTitle:
     text.optional(),
@@ -183,12 +248,16 @@ const settingsSchema = z.object({
   seoDescription:
     text.optional(),
 
+  // ========================================
   // PRICE DISCLAIMER
+  // ========================================
 
   priceDisclaimer:
     text.optional(),
 
+  // ========================================
   // BRAND LOGO
+  // ========================================
 
   logoUrl: webUrl
     .or(
@@ -200,160 +269,171 @@ const settingsSchema = z.object({
     .optional(),
 });
 
-// UNAUTHORIZED RESPONSE
+// ==========================================
+// LOAD SAVED WEBSITE SETTINGS
+// ==========================================
 
-function unauthorized() {
-  return NextResponse.json(
-    {
-      success: false,
-      error: 'Unauthorized. Please log in.',
-    },
-    {
-      status: 401,
-    }
+async function loadWebsiteSettings() {
+  const rows =
+    await prisma.siteSetting.findMany({
+      orderBy: {
+        key: 'asc',
+      },
+
+      select: {
+        key: true,
+
+        value: true,
+      },
+    });
+
+  return Object.fromEntries(
+    rows.map((row) => [
+      row.key,
+
+      row.value ?? '',
+    ])
   );
 }
 
-// LOAD WEBSITE SETTINGS
+// ==========================================
+// GET WEBSITE SETTINGS
+// OWNER AND ADMIN ONLY
+// ==========================================
 
-export async function GET() {
+export async function GET(
+  request: NextRequest
+) {
   try {
+    // ======================================
+    // AUTHENTICATION AND VIEW PERMISSION
+    // ======================================
 
-    // VERIFY ADMIN SESSION
+    const denied = await adminDenied({
+      request,
 
-    const session = await getSession();
+      permission:
+        PERMISSIONS.SETTINGS_VIEW,
+    });
 
-    if (!session) {
-      return unauthorized();
+    if (denied) {
+      return denied;
     }
 
-    // LOAD SAVED SETTINGS
+    // ======================================
+    // LOAD DATABASE SETTINGS
+    // ======================================
 
-    const rows =
-      await prisma.siteSetting.findMany({
-        orderBy: {
-          key: 'asc',
-        },
+    const settings =
+      await loadWebsiteSettings();
 
-        select: {
-          key: true,
-          value: true,
-        },
-      });
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
 
-    const settings = Object.fromEntries(
-      rows.map((row) => [
-        row.key,
-        row.value ?? '',
-      ])
-    );
-
-    return NextResponse.json(
-      {
+    return secureAdminResponse(
+      NextResponse.json({
         success: true,
+
         settings,
-      },
-      {
-        headers: {
-          'Cache-Control': 'no-store',
-        },
-      }
+      })
     );
 
   } catch (error) {
-    console.error(
-      'Settings GET error:',
-      error
-    );
-
-    return NextResponse.json(
-      {
-        success: false,
-        error: 'Unable to load website settings.',
-      },
-      {
-        status: 500,
-      }
+    return apiError(
+      error,
+      'Website settings'
     );
   }
 }
 
+// ==========================================
 // UPDATE WEBSITE SETTINGS
+// OWNER AND ADMIN ONLY
+// ==========================================
 
 export async function PATCH(
   request: NextRequest
 ) {
   try {
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
 
-    // VERIFY ADMIN SESSION
+    const denied = await adminDenied({
+      request,
 
-    const session = await getSession();
+      permission:
+        PERMISSIONS.SETTINGS_MANAGE,
+    });
 
-    if (!session) {
-      return unauthorized();
+    if (denied) {
+      return denied;
     }
 
-    // READ REQUEST BODY
+    // ======================================
+    // PARSE REQUEST BODY
+    // ======================================
 
     const body = await request
       .json()
       .catch(() => null);
 
+    // ======================================
     // VALIDATE WEBSITE SETTINGS
+    // ======================================
 
-    const parsed = settingsSchema.safeParse(
-      body?.settings ?? body
-    );
+    const parsed =
+      settingsSchema.safeParse(
+        body?.settings ?? body
+      );
 
     if (!parsed.success) {
-      const details = parsed.error.flatten();
+      const details =
+        z.flattenError(parsed.error);
 
-      const fieldErrors = Object.values(
-        details.fieldErrors
-      ).flat();
+      const fieldErrors =
+        Object.values(
+          details.fieldErrors
+        ).flat();
 
-      return NextResponse.json(
-        {
-          success: false,
+      return badInput(
+        fieldErrors[0] ||
+          'Invalid website settings.',
 
-          error:
-            fieldErrors[0] ||
-            'Invalid website settings.',
-
-          details,
-        },
-        {
-          status: 400,
-        }
+        details
       );
     }
 
+    // ======================================
     // GET VALIDATED SETTINGS
+    // ======================================
 
     const entries = Object.entries(
       parsed.data
     ).filter(
-      ([, value]) => value !== undefined
+      ([, value]) =>
+        value !== undefined
     );
 
+    // ======================================
     // REJECT EMPTY UPDATE REQUESTS
+    // ======================================
 
     if (entries.length === 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'No website settings provided.',
-        },
-        {
-          status: 400,
-        }
+      return badInput(
+        'No website settings provided.'
       );
     }
 
-    // SAVE ALL SETTINGS IN ONE TRANSACTION
+    // ======================================
+    // SAVE ALL SETTINGS
+    // IN ONE DATABASE TRANSACTION
+    // ======================================
 
     await prisma.$transaction(
       entries.map(([key, value]) => {
+
         const storedValue =
           value === null
             ? null
@@ -366,6 +446,7 @@ export async function PATCH(
 
           create: {
             key,
+
             value: storedValue,
           },
 
@@ -376,67 +457,44 @@ export async function PATCH(
       })
     );
 
-    // REFRESH WEBSITE CACHE
+    // ======================================
+    // INVALIDATE WEBSITE SETTINGS CACHE
+    // ======================================
 
     revalidateTag('site-settings');
 
-    revalidatePath('/');
+    // ======================================
+    // REFRESH WEBSITE AND ADMIN PANEL
+    // ======================================
 
-    revalidatePath('/admin/settings');
+    refreshAdmin('/admin/settings');
 
-    // LOAD UPDATED DATABASE SETTINGS
+    // ======================================
+    // LOAD UPDATED WEBSITE SETTINGS
+    // ======================================
 
-    const rows =
-      await prisma.siteSetting.findMany({
-        orderBy: {
-          key: 'asc',
-        },
+    const settings =
+      await loadWebsiteSettings();
 
-        select: {
-          key: true,
-          value: true,
-        },
-      });
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
 
-    const settings = Object.fromEntries(
-      rows.map((row) => [
-        row.key,
-        row.value ?? '',
-      ])
-    );
-
-    // RETURN SAVED SETTINGS
-
-    return NextResponse.json(
-      {
+    return secureAdminResponse(
+      NextResponse.json({
         success: true,
 
         message:
           'Website settings saved successfully.',
 
         settings,
-      },
-      {
-        headers: {
-          'Cache-Control': 'no-store',
-        },
-      }
+      })
     );
 
   } catch (error) {
-    console.error(
-      'Settings PATCH error:',
-      error
-    );
-
-    return NextResponse.json(
-      {
-        success: false,
-        error: 'Unable to save website settings.',
-      },
-      {
-        status: 500,
-      }
+    return apiError(
+      error,
+      'Website settings'
     );
   }
 }

@@ -1,292 +1,507 @@
+import {
+  NextRequest,
+  NextResponse,
+} from 'next/server';
 
-import { NextRequest, NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
+
 import { z } from 'zod';
 
 import { prisma } from '@/lib/db';
-import { getSession } from '@/lib/auth';
+
+import { PERMISSIONS } from '@/lib/permissions';
+
+import {
+  adminDenied,
+  apiError,
+  badInput,
+  refreshAdmin,
+  secureAdminResponse,
+} from '@/lib/admin-api';
+
+// ==========================================
+// ROUTE CONFIGURATION
+// ==========================================
+
+export const dynamic = 'force-dynamic';
+
+export const revalidate = 0;
+
+// ==========================================
+// ROUTE CONTEXT
+// ==========================================
 
 type Context = {
   params: Promise<{ id: string }>;
 };
 
+// ==========================================
+// CATEGORY UPDATE VALIDATION
+// ==========================================
+
 const updateCategorySchema = z.object({
-  name: z.string().trim().min(1).optional(),
-  slug: z.string().trim().min(1).optional(),
-  label: z.string().trim().min(1).optional(),
-  description: z.string().nullable().optional(),
-  imageUrl: z.string().nullable().optional(),
-  displayOrder: z.number().int().optional(),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .optional(),
+
+  slug: z
+    .string()
+    .trim()
+    .min(1)
+    .optional(),
+
+  label: z
+    .string()
+    .trim()
+    .min(1)
+    .optional(),
+
+  description: z
+    .string()
+    .nullable()
+    .optional(),
+
+  imageUrl: z
+    .string()
+    .nullable()
+    .optional(),
+
+  displayOrder: z
+    .number()
+    .int()
+    .optional(),
+
+  isVisible: z
+    .boolean()
+    .optional(),
+
+  isPublished: z
+    .boolean()
+    .optional(),
+});
+
+// ==========================================
+// CATEGORY STATUS VALIDATION
+// ==========================================
+
+const categoryStatusSchema = z.object({
   isVisible: z.boolean().optional(),
+
   isPublished: z.boolean().optional(),
 });
 
-function unauthorized() {
-  return NextResponse.json(
-    {
-      success: false,
-      error: 'Unauthorized. Please log in.',
-    },
-    { status: 401 }
+// ==========================================
+// CATEGORY NOT FOUND RESPONSE
+// ==========================================
+
+function categoryNotFound() {
+  return secureAdminResponse(
+    NextResponse.json(
+      {
+        success: false,
+
+        error: 'Category not found.',
+      },
+      {
+        status: 404,
+      }
+    )
   );
 }
 
+// ==========================================
+// REFRESH CATEGORY AND PRODUCT DATA
+// ==========================================
+
 function refreshCategories() {
-  revalidatePath('/');
-  revalidatePath('/admin/categories');
+  refreshAdmin('/admin/categories');
+
   revalidatePath('/admin/products');
 }
 
-function handleError(
-  error: unknown,
-  operation: string
-) {
-  console.error(`Category ${operation} error:`, error);
+// ==========================================
+// CENTRALIZED CATEGORY ERROR HANDLING
+// ==========================================
 
-  const code =
+function handleCategoryError(
+  error: unknown
+) {
+  if (
     typeof error === 'object' &&
     error !== null &&
-    'code' in error
-      ? error.code
-      : undefined;
+    'code' in error &&
+    error.code === 'P2002'
+  ) {
+    return secureAdminResponse(
+      NextResponse.json(
+        {
+          success: false,
 
-  if (code === 'P2025') {
-    return NextResponse.json(
-      {
-        success: false,
-        error: 'Category not found.',
-      },
-      { status: 404 }
+          error:
+            'Category name or slug already exists.',
+        },
+        {
+          status: 409,
+        }
+      )
     );
   }
 
-  if (code === 'P2002') {
-    return NextResponse.json(
-      {
-        success: false,
-        error: 'Category name or slug already exists.',
-      },
-      { status: 409 }
-    );
-  }
-
-  return NextResponse.json(
-    {
-      success: false,
-      error: `Failed to ${operation} category.`,
-    },
-    { status: 500 }
+  return apiError(
+    error,
+    'Category'
   );
 }
 
-// GET CATEGORY
+// ==========================================
+// GET INDIVIDUAL CATEGORY
+// ==========================================
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: Context
 ) {
   try {
-    if (!(await getSession())) {
-      return unauthorized();
+    // AUTHENTICATION AND VIEW PERMISSION
+
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.CATEGORY_VIEW,
+    });
+
+    if (denied) {
+      return denied;
     }
 
     const { id } = await params;
 
-    const category = await prisma.category.findUnique({
-      where: { id },
-      include: {
-        productCategories: {
-          include: {
-            product: true,
+    // FETCH CATEGORY WITH RELATED PRODUCTS
+
+    const category =
+      await prisma.category.findUnique({
+        where: {
+          id,
+        },
+
+        include: {
+          productCategories: {
+            include: {
+              product: true,
+            },
           },
         },
-      },
-    });
+      });
 
     if (!category) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Category not found.',
-        },
-        { status: 404 }
-      );
+      return categoryNotFound();
     }
 
-    return NextResponse.json({
-      success: true,
-      category,
-    });
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        category,
+      })
+    );
+
   } catch (error) {
-    return handleError(error, 'fetch');
+    return handleCategoryError(error);
   }
 }
 
-// EDIT CATEGORY
+// ==========================================
+// UPDATE CATEGORY
+// OWNER AND ADMIN ONLY
+// ==========================================
 
 export async function PUT(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    if (!(await getSession())) {
-      return unauthorized();
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
+
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.CATEGORY_MANAGE,
+    });
+
+    if (denied) {
+      return denied;
     }
 
     const { id } = await params;
-    const body = await request.json().catch(() => null);
 
-    const parsed = updateCategorySchema.safeParse(body);
+    // ======================================
+    // VALIDATE REQUEST BODY
+    // ======================================
+
+    const body = await request
+      .json()
+      .catch(() => null);
+
+    const parsed =
+      updateCategorySchema.safeParse(body);
 
     if (!parsed.success) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Invalid category data.',
-          details: parsed.error.flatten(),
-        },
-        { status: 400 }
+      return badInput(
+        'Invalid category data.',
+
+        z.flattenError(parsed.error)
       );
     }
 
-    const category = await prisma.category.update({
-      where: { id },
-      data: parsed.data,
-    });
+    // ======================================
+    // REJECT EMPTY UPDATE REQUESTS
+    // ======================================
+
+    if (
+      Object.keys(parsed.data).length === 0
+    ) {
+      return badInput(
+        'Provide at least one category field to update.'
+      );
+    }
+
+    // ======================================
+    // UPDATE CATEGORY
+    // ======================================
+
+    const category =
+      await prisma.category.update({
+        where: {
+          id,
+        },
+
+        data: parsed.data,
+      });
+
+    // REFRESH WEBSITE AND ADMIN PANEL
 
     refreshCategories();
 
-    return NextResponse.json({
-      success: true,
-      category,
-      message: 'Category updated successfully.',
-    });
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        category,
+
+        message:
+          'Category updated successfully.',
+      })
+    );
+
   } catch (error) {
-    return handleError(error, 'update');
+    return handleCategoryError(error);
   }
 }
 
-// SHOW / HIDE / PUBLISH
+// ==========================================
+// CATEGORY VISIBILITY AND PUBLISH STATUS
+// OWNER AND ADMIN ONLY
+// ==========================================
 
 export async function PATCH(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    if (!(await getSession())) {
-      return unauthorized();
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
+
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.CATEGORY_MANAGE,
+    });
+
+    if (denied) {
+      return denied;
     }
 
     const { id } = await params;
-    const body = await request.json().catch(() => null);
 
-    const parsed = z
-      .object({
-        isVisible: z.boolean().optional(),
-        isPublished: z.boolean().optional(),
-      })
-      .safeParse(body);
+    // ======================================
+    // VALIDATE STATUS UPDATE
+    // ======================================
+
+    const body = await request
+      .json()
+      .catch(() => null);
+
+    const parsed =
+      categoryStatusSchema.safeParse(body);
 
     if (
       !parsed.success ||
       Object.keys(parsed.data).length === 0
     ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Provide isVisible or isPublished.',
-        },
-        { status: 400 }
+      return badInput(
+        'Provide isVisible or isPublished.'
       );
     }
 
-    const category = await prisma.category.update({
-      where: { id },
-      data: parsed.data,
-    });
+    // ======================================
+    // UPDATE CATEGORY STATUS
+    // ======================================
+
+    const category =
+      await prisma.category.update({
+        where: {
+          id,
+        },
+
+        data: parsed.data,
+      });
 
     refreshCategories();
 
-    return NextResponse.json({
-      success: true,
-      category,
-      message: 'Category status updated.',
-    });
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        category,
+
+        message:
+          'Category status updated.',
+      })
+    );
+
   } catch (error) {
-    return handleError(error, 'update');
+    return handleCategoryError(error);
   }
 }
 
-// SAFE PERMANENT CATEGORY DELETE
+// ==========================================
+// SAFE PERMANENT CATEGORY DELETION
+// OWNER AND ADMIN ONLY
+// ==========================================
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: Context
 ) {
   try {
-    if (!(await getSession())) {
-      return unauthorized();
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
+
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.CATEGORY_MANAGE,
+    });
+
+    if (denied) {
+      return denied;
     }
 
     const { id } = await params;
 
-    const deleted = await prisma.$transaction(
-      async (tx) => {
-        const category = await tx.category.findUnique({
-          where: { id },
-          select: {
-            name: true,
-            _count: {
-              select: {
-                productCategories: true,
+    // ======================================
+    // ATOMIC DATABASE TRANSACTION
+    // ======================================
+
+    const deleted =
+      await prisma.$transaction(
+        async (tx) => {
+
+          // FETCH CATEGORY AND PRODUCT COUNT
+
+          const category =
+            await tx.category.findUnique({
+              where: {
+                id,
               },
+
+              select: {
+                name: true,
+
+                _count: {
+                  select: {
+                    productCategories: true,
+                  },
+                },
+              },
+            });
+
+          if (!category) {
+            return null;
+          }
+
+          // ==================================
+          // REMOVE CATEGORY ASSIGNMENTS ONLY
+          // NEVER DELETE ACTUAL PRODUCTS
+          // ==================================
+
+          await tx.productCategory.deleteMany({
+            where: {
+              categoryId: id,
             },
-          },
-        });
+          });
 
-        if (!category) return null;
+          // DELETE CATEGORY
 
-        // Only remove category assignments.
-        // NEVER delete the actual products.
+          await tx.category.delete({
+            where: {
+              id,
+            },
+          });
 
-        await tx.productCategory.deleteMany({
-          where: { categoryId: id },
-        });
+          return {
+            name: category.name,
 
-        await tx.category.delete({
-          where: { id },
-        });
-
-        return {
-          name: category.name,
-          affectedProducts:
-            category._count.productCategories,
-        };
-      }
-    );
+            affectedProducts:
+              category._count.productCategories,
+          };
+        }
+      );
 
     if (!deleted) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Category not found.',
-        },
-        { status: 404 }
-      );
+      return categoryNotFound();
     }
+
+    // ======================================
+    // REFRESH WEBSITE AND ADMIN PANEL
+    // ======================================
 
     refreshCategories();
 
-    return NextResponse.json({
-      success: true,
-      deleted: true,
-      deletedProductCount: 0,
-      categoryName: deleted.name,
-      affectedProducts: deleted.affectedProducts,
-      message:
-        'Category permanently deleted. Products preserved.',
-    });
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        deleted: true,
+
+        deletedProductCount: 0,
+
+        categoryName:
+          deleted.name,
+
+        affectedProducts:
+          deleted.affectedProducts,
+
+        message:
+          'Category permanently deleted. Products preserved.',
+      })
+    );
+
   } catch (error) {
-    return handleError(error, 'delete');
+    return handleCategoryError(error);
   }
 }

@@ -1,24 +1,47 @@
+import {
+  NextRequest,
+  NextResponse,
+} from 'next/server';
 
-import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+
 import { z } from 'zod';
+
+import { PERMISSIONS } from '@/lib/permissions';
 
 import {
   adminDenied,
   apiError,
   badInput,
   refreshAdmin,
+  secureAdminResponse,
 } from '@/lib/admin-api';
+
+// ==========================================
+// ROUTE CONFIGURATION
+// ==========================================
+
+export const dynamic = 'force-dynamic';
+
+export const revalidate = 0;
+
+// ==========================================
+// ROUTE CONTEXT
+// ==========================================
 
 type Context = {
   params: Promise<{ id: string }>;
 };
 
+// ==========================================
 // IMAGE URL VALIDATION
+// ==========================================
 
 const imageUrlSchema = z.string().trim().refine(
   (value) => {
-    if (/^\/(?:uploads|images)\/[a-zA-Z0-9._-]+$/.test(value)) {
+    if (
+      /^\/(?:uploads|images)\/[a-zA-Z0-9._-]+$/.test(value)
+    ) {
       return true;
     }
 
@@ -29,6 +52,7 @@ const imageUrlSchema = z.string().trim().refine(
         url.protocol === 'https:' ||
         url.protocol === 'http:'
       );
+
     } catch {
       return false;
     }
@@ -36,7 +60,9 @@ const imageUrlSchema = z.string().trim().refine(
   'Enter a valid image URL or local image path.'
 );
 
+// ==========================================
 // BANNER UPDATE VALIDATION
+// ==========================================
 
 const updateBannerSchema = z.object({
   eyebrow: z
@@ -103,63 +129,126 @@ const updateBannerSchema = z.object({
     .optional(),
 });
 
+// ==========================================
 // BANNER STATUS VALIDATION
+// ==========================================
 
 const patchBannerSchema = z.object({
-  isActive: z.boolean().optional(),
-  displayOrder: z.number().int().optional(),
+  isActive: z
+    .boolean()
+    .optional(),
+
+  displayOrder: z
+    .number()
+    .int()
+    .optional(),
 });
 
+// ==========================================
+// BANNER NOT FOUND RESPONSE
+// ==========================================
+
+function bannerNotFound() {
+  return secureAdminResponse(
+    NextResponse.json(
+      {
+        success: false,
+
+        error: 'Banner not found.',
+      },
+      {
+        status: 404,
+      }
+    )
+  );
+}
+
+// ==========================================
 // GET INDIVIDUAL BANNER
+// ==========================================
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: Context
 ) {
   try {
-    const denied = await adminDenied();
+    // ======================================
+    // AUTHENTICATION AND VIEW PERMISSION
+    // ======================================
 
-    if (denied) return denied;
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.BANNER_VIEW,
+    });
+
+    if (denied) {
+      return denied;
+    }
 
     const { id } = await params;
 
+    // FETCH BANNER
+
     const banner =
       await prisma.homepageBanner.findUnique({
-        where: { id },
+        where: {
+          id,
+        },
       });
 
     if (!banner) {
-      return NextResponse.json(
-        {
-          error: 'Banner not found.',
-        },
-        {
-          status: 404,
-        }
-      );
+      return bannerNotFound();
     }
 
-    return NextResponse.json({
-      success: true,
-      banner,
-    });
+    // SECURE SUCCESS RESPONSE
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        banner,
+      })
+    );
+
   } catch (error) {
-    return apiError(error, 'Banner');
+    return apiError(
+      error,
+      'Banner'
+    );
   }
 }
 
+// ==========================================
 // UPDATE BANNER
+// ==========================================
 
 export async function PUT(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    const denied = await adminDenied();
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
 
-    if (denied) return denied;
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.BANNER_MANAGE,
+    });
+
+    if (denied) {
+      return denied;
+    }
 
     const { id } = await params;
+
+    // ======================================
+    // PARSE AND VALIDATE REQUEST BODY
+    // ======================================
 
     const body = await request
       .json()
@@ -171,30 +260,34 @@ export async function PUT(
     if (!parsed.success) {
       return badInput(
         'Invalid banner data.',
-        parsed.error.flatten()
+
+        z.flattenError(parsed.error)
       );
     }
 
-    if (Object.keys(parsed.data).length === 0) {
+    // REJECT EMPTY UPDATE REQUESTS
+
+    if (
+      Object.keys(parsed.data).length === 0
+    ) {
       return badInput(
         'No banner changes provided.'
       );
     }
 
+    // ======================================
+    // FETCH EXISTING BANNER
+    // ======================================
+
     const existingBanner =
       await prisma.homepageBanner.findUnique({
-        where: { id },
+        where: {
+          id,
+        },
       });
 
     if (!existingBanner) {
-      return NextResponse.json(
-        {
-          error: 'Banner not found.',
-        },
-        {
-          status: 404,
-        }
-      );
+      return bannerNotFound();
     }
 
     const {
@@ -206,8 +299,10 @@ export async function PUT(
       ...data
     } = parsed.data;
 
+    // ======================================
     // PRESERVE EXISTING SCHEDULE
     // UNLESS NEW DATES ARE PROVIDED
+    // ======================================
 
     const startDate =
       startsAt === undefined
@@ -223,7 +318,9 @@ export async function PUT(
           ? new Date(endsAt)
           : null;
 
-    // VALIDATE DATE RANGE
+    // ======================================
+    // VALIDATE BANNER DATE RANGE
+    // ======================================
 
     if (
       startDate &&
@@ -235,11 +332,15 @@ export async function PUT(
       );
     }
 
-    // UPDATE DATABASE RECORD
+    // ======================================
+    // UPDATE BANNER DATABASE RECORD
+    // ======================================
 
     const banner =
       await prisma.homepageBanner.update({
-        where: { id },
+        where: {
+          id,
+        },
 
         data: {
           ...data,
@@ -279,33 +380,65 @@ export async function PUT(
         },
       });
 
+    // ======================================
     // REFRESH WEBSITE AND ADMIN PANEL
+    // ======================================
 
     refreshAdmin('/admin/banners');
 
-    return NextResponse.json({
-      success: true,
-      banner,
-      message: 'Banner updated successfully.',
-    });
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        banner,
+
+        message:
+          'Banner updated successfully.',
+      })
+    );
+
   } catch (error) {
-    return apiError(error, 'Banner');
+    return apiError(
+      error,
+      'Banner'
+    );
   }
 }
 
+// ==========================================
 // ACTIVATE / DEACTIVATE BANNER
 // UPDATE DISPLAY ORDER
+// ==========================================
 
 export async function PATCH(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    const denied = await adminDenied();
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
 
-    if (denied) return denied;
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.BANNER_MANAGE,
+    });
+
+    if (denied) {
+      return denied;
+    }
 
     const { id } = await params;
+
+    // ======================================
+    // VALIDATE STATUS UPDATE
+    // ======================================
 
     const body = await request
       .json()
@@ -317,59 +450,116 @@ export async function PATCH(
     if (!parsed.success) {
       return badInput(
         'Invalid banner status or display order.',
-        parsed.error.flatten()
+
+        z.flattenError(parsed.error)
       );
     }
 
-    if (Object.keys(parsed.data).length === 0) {
+    // REJECT EMPTY STATUS UPDATE
+
+    if (
+      Object.keys(parsed.data).length === 0
+    ) {
       return badInput(
         'Provide banner status or display order.'
       );
     }
 
+    // ======================================
+    // UPDATE BANNER STATUS
+    // ======================================
+
     const banner =
       await prisma.homepageBanner.update({
-        where: { id },
+        where: {
+          id,
+        },
+
         data: parsed.data,
       });
 
     refreshAdmin('/admin/banners');
 
-    return NextResponse.json({
-      success: true,
-      banner,
-      message: 'Banner status updated successfully.',
-    });
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        banner,
+
+        message:
+          'Banner status updated successfully.',
+      })
+    );
+
   } catch (error) {
-    return apiError(error, 'Banner');
+    return apiError(
+      error,
+      'Banner'
+    );
   }
 }
 
+// ==========================================
 // PERMANENTLY DELETE BANNER
+// ==========================================
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: Context
 ) {
   try {
-    const denied = await adminDenied();
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
 
-    if (denied) return denied;
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.BANNER_MANAGE,
+    });
+
+    if (denied) {
+      return denied;
+    }
 
     const { id } = await params;
 
+    // ======================================
+    // DELETE BANNER FROM DATABASE
+    // ======================================
+
     await prisma.homepageBanner.delete({
-      where: { id },
+      where: {
+        id,
+      },
     });
+
+    // ======================================
+    // REFRESH WEBSITE AND ADMIN PANEL
+    // ======================================
 
     refreshAdmin('/admin/banners');
 
-    return NextResponse.json({
-      success: true,
-      deleted: true,
-      message: 'Banner deleted successfully.',
-    });
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        deleted: true,
+
+        message:
+          'Banner deleted successfully.',
+      })
+    );
+
   } catch (error) {
-    return apiError(error, 'Banner');
+    return apiError(
+      error,
+      'Banner'
+    );
   }
 }

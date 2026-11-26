@@ -1,19 +1,40 @@
+import {
+  NextRequest,
+  NextResponse,
+} from 'next/server';
 
-import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+
 import { z } from 'zod';
+
+import { PERMISSIONS } from '@/lib/permissions';
 
 import {
   adminDenied,
   apiError,
   badInput,
   refreshAdmin,
+  secureAdminResponse,
 } from '@/lib/admin-api';
 
+// ==========================================
+// ROUTE CONFIGURATION
+// ==========================================
+
+export const dynamic = 'force-dynamic';
+
+export const revalidate = 0;
+
+// ==========================================
 // DISCOUNT CAMPAIGN VALIDATION
+// ==========================================
 
 const createDiscountSchema = z.object({
-  name: z.string().trim().min(1).max(200),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200),
 
   description: z
     .string()
@@ -27,7 +48,9 @@ const createDiscountSchema = z.object({
     .nullable()
     .optional(),
 
-  isActive: z.boolean().default(true),
+  isActive: z
+    .boolean()
+    .default(true),
 
   startsAt: z
     .string()
@@ -46,13 +69,32 @@ const createDiscountSchema = z.object({
     .default([]),
 });
 
+// ==========================================
 // GET ALL DISCOUNT CAMPAIGNS
+// ==========================================
 
-export async function GET() {
+export async function GET(
+  request: NextRequest
+) {
   try {
-    const denied = await adminDenied();
+    // ======================================
+    // AUTHENTICATION AND VIEW PERMISSION
+    // ======================================
 
-    if (denied) return denied;
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.DISCOUNT_VIEW,
+    });
+
+    if (denied) {
+      return denied;
+    }
+
+    // ======================================
+    // FETCH DISCOUNT CAMPAIGNS
+    // ======================================
 
     const discounts =
       await prisma.discountCampaign.findMany({
@@ -62,11 +104,17 @@ export async function GET() {
               product: {
                 select: {
                   id: true,
+
                   name: true,
+
                   slug: true,
+
                   priceInPaise: true,
+
                   originalPriceInPaise: true,
+
                   primaryImageUrl: true,
+
                   status: true,
                 },
               },
@@ -79,28 +127,61 @@ export async function GET() {
         },
       });
 
-    return NextResponse.json({
-      success: true,
-      discounts,
-    });
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        discounts,
+      })
+    );
+
   } catch (error) {
-    return apiError(error, 'Discount campaign');
+    return apiError(
+      error,
+      'Discount campaign'
+    );
   }
 }
 
+// ==========================================
 // CREATE DISCOUNT CAMPAIGN
+// OWNER AND ADMIN ONLY
+// ==========================================
 
 export async function POST(
   request: NextRequest
 ) {
   try {
-    const denied = await adminDenied();
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
 
-    if (denied) return denied;
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.DISCOUNT_MANAGE,
+    });
+
+    if (denied) {
+      return denied;
+    }
+
+    // ======================================
+    // PARSE REQUEST BODY
+    // ======================================
 
     const body = await request
       .json()
       .catch(() => null);
+
+    // ======================================
+    // VALIDATE DISCOUNT CAMPAIGN INPUT
+    // ======================================
 
     const parsed =
       createDiscountSchema.safeParse(body);
@@ -108,7 +189,8 @@ export async function POST(
     if (!parsed.success) {
       return badInput(
         'Invalid discount campaign data.',
-        parsed.error.flatten()
+
+        z.flattenError(parsed.error)
       );
     }
 
@@ -119,7 +201,9 @@ export async function POST(
       ...data
     } = parsed.data;
 
-    // VALIDATE CAMPAIGN DATES
+    // ======================================
+    // VALIDATE CAMPAIGN SCHEDULE
+    // ======================================
 
     const startDate = startsAt
       ? new Date(startsAt)
@@ -139,13 +223,17 @@ export async function POST(
       );
     }
 
-    // REMOVE DUPLICATE PRODUCT IDS
+    // ======================================
+    // PREVENT DUPLICATE PRODUCT ASSIGNMENTS
+    // ======================================
 
     const uniqueProductIds = [
       ...new Set(productIds),
     ];
 
+    // ======================================
     // VERIFY SELECTED PRODUCTS EXIST
+    // ======================================
 
     if (uniqueProductIds.length > 0) {
       const existingProducts =
@@ -167,7 +255,10 @@ export async function POST(
       }
     }
 
-    // CREATE CAMPAIGN AND PRODUCT ASSOCIATIONS
+    // ======================================
+    // CREATE DISCOUNT CAMPAIGN
+    // AND PRODUCT ASSOCIATIONS
+    // ======================================
 
     const discount =
       await prisma.discountCampaign.create({
@@ -181,6 +272,7 @@ export async function POST(
             data.discountLabel || null,
 
           startsAt: startDate,
+
           endsAt: endDate,
 
           discountProducts: {
@@ -201,22 +293,36 @@ export async function POST(
         },
       });
 
+    // ======================================
     // REFRESH WEBSITE AND ADMIN PANEL
+    // ======================================
 
     refreshAdmin('/admin/discounts');
 
-    return NextResponse.json(
-      {
-        success: true,
-        discount,
-        message:
-          'Discount campaign created successfully.',
-      },
-      {
-        status: 201,
-      }
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json(
+        {
+          success: true,
+
+          discount,
+
+          message:
+            'Discount campaign created successfully.',
+        },
+        {
+          status: 201,
+        }
+      )
     );
+
   } catch (error) {
-    return apiError(error, 'Discount campaign');
+    return apiError(
+      error,
+      'Discount campaign'
+    );
   }
 }

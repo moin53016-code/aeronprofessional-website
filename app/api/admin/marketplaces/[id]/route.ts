@@ -1,20 +1,41 @@
+import {
+  NextRequest,
+  NextResponse,
+} from 'next/server';
 
-import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+
 import { z } from 'zod';
+
+import { PERMISSIONS } from '@/lib/permissions';
 
 import {
   adminDenied,
   apiError,
   badInput,
   refreshAdmin,
+  secureAdminResponse,
 } from '@/lib/admin-api';
+
+// ==========================================
+// ROUTE CONFIGURATION
+// ==========================================
+
+export const dynamic = 'force-dynamic';
+
+export const revalidate = 0;
+
+// ==========================================
+// ROUTE CONTEXT
+// ==========================================
 
 type Context = {
   params: Promise<{ id: string }>;
 };
 
+// ==========================================
 // MARKETPLACE VALIDATION
+// ==========================================
 
 const marketplaceSchema = z.object({
   name: z
@@ -52,6 +73,7 @@ const marketplaceSchema = z.object({
             !url.username &&
             !url.password
           );
+
         } catch {
           return false;
         }
@@ -60,66 +82,132 @@ const marketplaceSchema = z.object({
     ),
 });
 
+// ==========================================
 // MARKETPLACE STATUS VALIDATION
+// ==========================================
 
 const statusSchema = z.object({
   isActive: z.boolean(),
 });
 
+// ==========================================
+// MARKETPLACE NOT FOUND RESPONSE
+// ==========================================
+
+function marketplaceNotFound() {
+  return secureAdminResponse(
+    NextResponse.json(
+      {
+        success: false,
+
+        error: 'Marketplace not found.',
+      },
+      {
+        status: 404,
+      }
+    )
+  );
+}
+
+// ==========================================
 // GET INDIVIDUAL MARKETPLACE
+// ==========================================
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: Context
 ) {
   try {
-    const denied = await adminDenied();
+    // ======================================
+    // AUTHENTICATION AND VIEW PERMISSION
+    // ======================================
 
-    if (denied) return denied;
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.MARKETPLACE_VIEW,
+    });
+
+    if (denied) {
+      return denied;
+    }
 
     const { id } = await params;
 
+    // ======================================
+    // FETCH MARKETPLACE
+    // ======================================
+
     const marketplace =
       await prisma.marketplace.findUnique({
-        where: { id },
+        where: {
+          id,
+        },
       });
 
     if (!marketplace) {
-      return NextResponse.json(
-        {
-          error: 'Marketplace not found.',
-        },
-        {
-          status: 404,
-        }
-      );
+      return marketplaceNotFound();
     }
 
-    return NextResponse.json({
-      success: true,
-      marketplace,
-    });
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        marketplace,
+      })
+    );
+
   } catch (error) {
-    return apiError(error, 'Marketplace');
+    return apiError(
+      error,
+      'Marketplace'
+    );
   }
 }
 
+// ==========================================
 // UPDATE MARKETPLACE
+// OWNER AND ADMIN ONLY
+// ==========================================
 
 export async function PUT(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    const denied = await adminDenied();
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
 
-    if (denied) return denied;
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.MARKETPLACE_MANAGE,
+    });
+
+    if (denied) {
+      return denied;
+    }
 
     const { id } = await params;
+
+    // ======================================
+    // PARSE REQUEST BODY
+    // ======================================
 
     const body = await request
       .json()
       .catch(() => null);
+
+    // ======================================
+    // VALIDATE MARKETPLACE INPUT
+    // ======================================
 
     const parsed =
       marketplaceSchema.safeParse(body);
@@ -127,27 +215,29 @@ export async function PUT(
     if (!parsed.success) {
       return badInput(
         'Invalid marketplace information.',
-        parsed.error.flatten()
+
+        z.flattenError(parsed.error)
       );
     }
+
+    // ======================================
+    // VERIFY EXISTING MARKETPLACE
+    // ======================================
 
     const existingMarketplace =
       await prisma.marketplace.findUnique({
-        where: { id },
+        where: {
+          id,
+        },
       });
 
     if (!existingMarketplace) {
-      return NextResponse.json(
-        {
-          error: 'Marketplace not found.',
-        },
-        {
-          status: 404,
-        }
-      );
+      return marketplaceNotFound();
     }
 
+    // ======================================
     // PREVENT DUPLICATE MARKETPLACE NAMES
+    // ======================================
 
     const duplicate =
       await prisma.marketplace.findFirst({
@@ -158,74 +248,119 @@ export async function PUT(
 
           name: {
             equals: parsed.data.name,
+
             mode: 'insensitive',
           },
         },
       });
 
     if (duplicate) {
-      return NextResponse.json(
-        {
-          error:
-            'A marketplace with this name already exists.',
-        },
-        {
-          status: 409,
-        }
+      return secureAdminResponse(
+        NextResponse.json(
+          {
+            success: false,
+
+            error:
+              'A marketplace with this name already exists.',
+          },
+          {
+            status: 409,
+          }
+        )
       );
     }
 
+    // ======================================
     // UPDATE MARKETPLACE
     // EXISTING SLUG IS PRESERVED
+    // ======================================
 
     const marketplace =
       await prisma.marketplace.update({
-        where: { id },
+        where: {
+          id,
+        },
 
         data: {
           name: parsed.data.name,
 
-          badgeText:
-            parsed.data.badgeText === undefined
-              ? existingMarketplace.badgeText
-              : parsed.data.badgeText || null,
+          ...(parsed.data.badgeText !== undefined
+            ? {
+                badgeText:
+                  parsed.data.badgeText || null,
+              }
+            : {}),
 
-          tagline:
-            parsed.data.tagline === undefined
-              ? existingMarketplace.tagline
-              : parsed.data.tagline || null,
+          ...(parsed.data.tagline !== undefined
+            ? {
+                tagline:
+                  parsed.data.tagline || null,
+              }
+            : {}),
 
           url: parsed.data.url,
         },
       });
 
+    // ======================================
     // REFRESH WEBSITE AND ADMIN PANEL
+    // ======================================
 
     refreshAdmin('/admin/marketplaces');
 
-    return NextResponse.json({
-      success: true,
-      marketplace,
-      message:
-        'Marketplace updated successfully.',
-    });
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        marketplace,
+
+        message:
+          'Marketplace updated successfully.',
+      })
+    );
+
   } catch (error) {
-    return apiError(error, 'Marketplace');
+    return apiError(
+      error,
+      'Marketplace'
+    );
   }
 }
 
+// ==========================================
 // ACTIVATE / DEACTIVATE MARKETPLACE
+// OWNER AND ADMIN ONLY
+// ==========================================
 
 export async function PATCH(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    const denied = await adminDenied();
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
 
-    if (denied) return denied;
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.MARKETPLACE_MANAGE,
+    });
+
+    if (denied) {
+      return denied;
+    }
 
     const { id } = await params;
+
+    // ======================================
+    // VALIDATE MARKETPLACE STATUS
+    // ======================================
 
     const body = await request
       .json()
@@ -237,51 +372,97 @@ export async function PATCH(
     if (!parsed.success) {
       return badInput(
         'Invalid marketplace status.',
-        parsed.error.flatten()
+
+        z.flattenError(parsed.error)
       );
     }
 
+    // ======================================
+    // UPDATE MARKETPLACE STATUS
+    // ======================================
+
     const marketplace =
       await prisma.marketplace.update({
-        where: { id },
+        where: {
+          id,
+        },
 
         data: {
-          isActive: parsed.data.isActive,
+          isActive:
+            parsed.data.isActive,
         },
       });
 
+    // ======================================
+    // REFRESH WEBSITE AND ADMIN PANEL
+    // ======================================
+
     refreshAdmin('/admin/marketplaces');
 
-    return NextResponse.json({
-      success: true,
-      marketplace,
-      message: parsed.data.isActive
-        ? 'Marketplace activated successfully.'
-        : 'Marketplace deactivated successfully.',
-    });
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        marketplace,
+
+        message: parsed.data.isActive
+          ? 'Marketplace activated successfully.'
+          : 'Marketplace deactivated successfully.',
+      })
+    );
+
   } catch (error) {
-    return apiError(error, 'Marketplace');
+    return apiError(
+      error,
+      'Marketplace'
+    );
   }
 }
 
+// ==========================================
 // PERMANENTLY DELETE MARKETPLACE
+// OWNER AND ADMIN ONLY
 // WITHOUT DELETING PRODUCTS
+// ==========================================
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: Context
 ) {
   try {
-    const denied = await adminDenied();
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
 
-    if (denied) return denied;
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.MARKETPLACE_MANAGE,
+    });
+
+    if (denied) {
+      return denied;
+    }
 
     const { id } = await params;
+
+    // ======================================
+    // ATOMIC DATABASE TRANSACTION
+    // ======================================
 
     const removedLinks =
       await prisma.$transaction(
         async (tx) => {
-          // REMOVE PRODUCT-MARKETPLACE ASSOCIATIONS
+
+          // ==================================
+          // REMOVE PRODUCT-MARKETPLACE LINKS
+          // NEVER DELETE ACTUAL PRODUCTS
+          // ==================================
 
           const links =
             await tx.productMarketplaceLink.deleteMany({
@@ -290,31 +471,50 @@ export async function DELETE(
               },
             });
 
-          // DELETE ONLY THE MARKETPLACE RECORD
+          // ==================================
+          // DELETE ONLY MARKETPLACE RECORD
+          // ==================================
 
           await tx.marketplace.delete({
-            where: { id },
+            where: {
+              id,
+            },
           });
 
           return links.count;
         }
       );
 
+    // ======================================
     // REFRESH WEBSITE AND ADMIN PANEL
+    // ======================================
 
     refreshAdmin('/admin/marketplaces');
 
-    return NextResponse.json({
-      success: true,
-      deleted: true,
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
 
-      deletedProductCount: 0,
-      removedMarketplaceLinks: removedLinks,
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
 
-      message:
-        'Marketplace deleted successfully. All products preserved.',
-    });
+        deleted: true,
+
+        deletedProductCount: 0,
+
+        removedMarketplaceLinks:
+          removedLinks,
+
+        message:
+          'Marketplace deleted successfully. All products preserved.',
+      })
+    );
+
   } catch (error) {
-    return apiError(error, 'Marketplace');
+    return apiError(
+      error,
+      'Marketplace'
+    );
   }
 }

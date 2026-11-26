@@ -1,183 +1,427 @@
+import {
+  NextRequest,
+  NextResponse,
+} from 'next/server';
 
-import { NextRequest, NextResponse } from 'next/server';
-import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
+
 import { prisma } from '@/lib/db';
-import { getSession } from '@/lib/auth';
+
+import { PERMISSIONS } from '@/lib/permissions';
+
+import {
+  adminDenied,
+  apiError,
+  badInput,
+  refreshAdmin,
+  secureAdminResponse,
+} from '@/lib/admin-api';
+
+// ==========================================
+// ROUTE CONFIGURATION
+// ==========================================
+
+export const dynamic = 'force-dynamic';
+
+export const revalidate = 0;
+
+// ==========================================
+// ROUTE CONTEXT
+// ==========================================
 
 type Context = {
   params: Promise<{ id: string }>;
 };
 
+// ==========================================
+// FAQ UPDATE VALIDATION
+// ==========================================
+
 const updateFaqSchema = z.object({
-  question: z.string().trim().min(1).optional(),
-  answer: z.string().trim().min(1).optional(),
-  displayOrder: z.number().int().optional(),
-  isActive: z.boolean().optional(),
+  question: z
+    .string()
+    .trim()
+    .min(1, 'Question is required')
+    .max(500)
+    .optional(),
+
+  answer: z
+    .string()
+    .trim()
+    .min(1, 'Answer is required')
+    .max(10000)
+    .optional(),
+
+  displayOrder: z
+    .number()
+    .int()
+    .optional(),
+
+  isActive: z
+    .boolean()
+    .optional(),
 });
 
-function unauthorized() {
-  return NextResponse.json(
-    { error: 'Unauthorized' },
-    { status: 401 }
+// ==========================================
+// FAQ STATUS VALIDATION
+// ==========================================
+
+const statusSchema = z.object({
+  isActive: z
+    .boolean()
+    .optional(),
+
+  displayOrder: z
+    .number()
+    .int()
+    .optional(),
+});
+
+// ==========================================
+// FAQ NOT FOUND RESPONSE
+// ==========================================
+
+function faqNotFound() {
+  return secureAdminResponse(
+    NextResponse.json(
+      {
+        success: false,
+
+        error: 'FAQ not found.',
+      },
+      {
+        status: 404,
+      }
+    )
   );
 }
 
-function handleError(error: unknown) {
-  console.error('FAQ API error:', error);
-
-  if (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    error.code === 'P2025'
-  ) {
-    return NextResponse.json(
-      { error: 'FAQ not found' },
-      { status: 404 }
-    );
-  }
-
-  return NextResponse.json(
-    { error: 'Internal server error' },
-    { status: 500 }
-  );
-}
-
-function refreshFaqs() {
-  revalidatePath('/');
-  revalidatePath('/admin/content');
-}
+// ==========================================
+// GET INDIVIDUAL FAQ
+// ==========================================
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: Context
 ) {
   try {
-    if (!(await getSession())) return unauthorized();
+    // ======================================
+    // AUTHENTICATION AND VIEW PERMISSION
+    // ======================================
+
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.FAQ_VIEW,
+    });
+
+    if (denied) {
+      return denied;
+    }
 
     const { id } = await params;
 
+    // ======================================
+    // FETCH FAQ
+    // ======================================
+
     const faq = await prisma.fAQ.findUnique({
-      where: { id },
+      where: {
+        id,
+      },
     });
 
     if (!faq) {
-      return NextResponse.json(
-        { error: 'FAQ not found' },
-        { status: 404 }
-      );
+      return faqNotFound();
     }
 
-    return NextResponse.json({
-      success: true,
-      faq,
-    });
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        faq,
+      })
+    );
+
   } catch (error) {
-    return handleError(error);
+    return apiError(
+      error,
+      'FAQ'
+    );
   }
 }
+
+// ==========================================
+// UPDATE FAQ
+// ==========================================
 
 export async function PUT(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    if (!(await getSession())) return unauthorized();
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
+
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.FAQ_MANAGE,
+    });
+
+    if (denied) {
+      return denied;
+    }
 
     const { id } = await params;
-    const body = await request.json().catch(() => null);
 
-    const result = updateFaqSchema.safeParse(body);
+    // ======================================
+    // PARSE REQUEST BODY
+    // ======================================
 
-    if (!result.success) {
-      return NextResponse.json(
-        {
-          error: 'Invalid FAQ data',
-          details: result.error.flatten(),
-        },
-        { status: 400 }
+    const body = await request
+      .json()
+      .catch(() => null);
+
+    // ======================================
+    // VALIDATE FAQ UPDATE INPUT
+    // ======================================
+
+    const parsed =
+      updateFaqSchema.safeParse(body);
+
+    if (!parsed.success) {
+      return badInput(
+        'Invalid FAQ data.',
+
+        z.flattenError(parsed.error)
       );
     }
 
+    // ======================================
+    // REJECT EMPTY UPDATE REQUESTS
+    // ======================================
+
+    if (
+      Object.keys(parsed.data).length === 0
+    ) {
+      return badInput(
+        'No FAQ changes provided.'
+      );
+    }
+
+    // ======================================
+    // UPDATE FAQ DATABASE RECORD
+    // ======================================
+
     const faq = await prisma.fAQ.update({
-      where: { id },
-      data: result.data,
+      where: {
+        id,
+      },
+
+      data: parsed.data,
     });
 
-    refreshFaqs();
+    // ======================================
+    // REFRESH STOREFRONT AND ADMIN PANEL
+    // ======================================
 
-    return NextResponse.json({
-      success: true,
-      faq,
-    });
+    refreshAdmin('/admin/content');
+
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        faq,
+
+        message:
+          'FAQ updated successfully.',
+      })
+    );
+
   } catch (error) {
-    return handleError(error);
+    return apiError(
+      error,
+      'FAQ'
+    );
   }
 }
+
+// ==========================================
+// ACTIVATE / DEACTIVATE FAQ
+// UPDATE FAQ DISPLAY ORDER
+// ==========================================
 
 export async function PATCH(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    if (!(await getSession())) return unauthorized();
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
+
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.FAQ_MANAGE,
+    });
+
+    if (denied) {
+      return denied;
+    }
 
     const { id } = await params;
 
-    const result = z.object({
-      isActive: z.boolean().optional(),
-      displayOrder: z.number().int().optional(),
-    }).safeParse(
-      await request.json().catch(() => null)
-    );
+    // ======================================
+    // PARSE REQUEST BODY
+    // ======================================
 
-    if (
-      !result.success ||
-      Object.keys(result.data).length === 0
-    ) {
-      return NextResponse.json(
-        { error: 'Invalid FAQ visibility or order' },
-        { status: 400 }
+    const body = await request
+      .json()
+      .catch(() => null);
+
+    // ======================================
+    // VALIDATE FAQ STATUS OR DISPLAY ORDER
+    // ======================================
+
+    const parsed =
+      statusSchema.safeParse(body);
+
+    if (!parsed.success) {
+      return badInput(
+        'Invalid FAQ visibility or order.',
+
+        z.flattenError(parsed.error)
       );
     }
 
+    // ======================================
+    // REJECT EMPTY STATUS UPDATE REQUESTS
+    // ======================================
+
+    if (
+      Object.keys(parsed.data).length === 0
+    ) {
+      return badInput(
+        'Provide FAQ visibility or display order.'
+      );
+    }
+
+    // ======================================
+    // UPDATE FAQ STATUS
+    // ======================================
+
     const faq = await prisma.fAQ.update({
-      where: { id },
-      data: result.data,
+      where: {
+        id,
+      },
+
+      data: parsed.data,
     });
 
-    refreshFaqs();
+    // ======================================
+    // REFRESH STOREFRONT AND ADMIN PANEL
+    // ======================================
 
-    return NextResponse.json({
-      success: true,
-      faq,
-    });
+    refreshAdmin('/admin/content');
+
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        faq,
+
+        message:
+          'FAQ status updated successfully.',
+      })
+    );
+
   } catch (error) {
-    return handleError(error);
+    return apiError(
+      error,
+      'FAQ'
+    );
   }
 }
 
+// ==========================================
+// PERMANENTLY DELETE FAQ
+// ==========================================
+
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: Context
 ) {
   try {
-    if (!(await getSession())) return unauthorized();
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
+
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.FAQ_MANAGE,
+    });
+
+    if (denied) {
+      return denied;
+    }
 
     const { id } = await params;
 
+    // ======================================
+    // DELETE FAQ DATABASE RECORD
+    // ======================================
+
     await prisma.fAQ.delete({
-      where: { id },
+      where: {
+        id,
+      },
     });
 
-    refreshFaqs();
+    // ======================================
+    // REFRESH STOREFRONT AND ADMIN PANEL
+    // ======================================
 
-    return NextResponse.json({
-      success: true,
-      deleted: true,
-    });
+    refreshAdmin('/admin/content');
+
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        deleted: true,
+
+        message:
+          'FAQ deleted successfully.',
+      })
+    );
+
   } catch (error) {
-    return handleError(error);
+    return apiError(
+      error,
+      'FAQ'
+    );
   }
 }

@@ -1,16 +1,37 @@
+import {
+  NextRequest,
+  NextResponse,
+} from 'next/server';
 
-import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+
+import { PERMISSIONS } from '@/lib/permissions';
 
 import {
   adminDenied,
   apiError,
   badInput,
+  secureAdminResponse,
 } from '@/lib/admin-api';
+
+// ==========================================
+// ROUTE CONFIGURATION
+// ==========================================
+
+export const dynamic = 'force-dynamic';
+
+export const revalidate = 0;
+
+// ==========================================
+// MAXIMUM IMAGE FILE SIZE
+// 10 MB PER IMAGE
+// ==========================================
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
+// ==========================================
 // SUPPORTED IMAGE FORMATS
+// ==========================================
 
 const allowedContentTypes = z.enum([
   'image/jpeg',
@@ -19,7 +40,9 @@ const allowedContentTypes = z.enum([
   'image/gif',
 ]);
 
+// ==========================================
 // UPLOAD REQUEST VALIDATION
+// ==========================================
 
 const presignSchema = z.object({
   filename: z
@@ -28,7 +51,8 @@ const presignSchema = z.object({
     .min(1, 'Filename is required')
     .max(255),
 
-  contentType: allowedContentTypes,
+  contentType:
+    allowedContentTypes,
 
   size: z
     .number()
@@ -40,23 +64,69 @@ const presignSchema = z.object({
     ),
 });
 
+// ==========================================
 // PREPARE IMAGE UPLOAD
+// ==========================================
 
 export async function POST(
   request: NextRequest
 ) {
   try {
-    // VERIFY ADMIN SESSION
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
 
-    const denied = await adminDenied();
+    const denied = await adminDenied({
+      request,
 
-    if (denied) return denied;
+      permission:
+        PERMISSIONS.MEDIA_UPLOAD,
+    });
 
-    // VALIDATE REQUEST BODY
+    if (denied) {
+      return denied;
+    }
+
+    // ======================================
+    // VERIFY JSON CONTENT TYPE
+    // ======================================
+
+    const contentTypeHeader =
+      request.headers
+        .get('content-type')
+        ?.split(';')[0]
+        .trim()
+        .toLowerCase();
+
+    if (
+      contentTypeHeader !== 'application/json'
+    ) {
+      return secureAdminResponse(
+        NextResponse.json(
+          {
+            success: false,
+
+            error:
+              'Content-Type must be application/json.',
+          },
+          {
+            status: 415,
+          }
+        )
+      );
+    }
+
+    // ======================================
+    // PARSE REQUEST BODY
+    // ======================================
 
     const body = await request
       .json()
       .catch(() => null);
+
+    // ======================================
+    // VALIDATE IMAGE UPLOAD INFORMATION
+    // ======================================
 
     const parsed =
       presignSchema.safeParse(body);
@@ -64,7 +134,8 @@ export async function POST(
     if (!parsed.success) {
       return badInput(
         'Invalid image upload information.',
-        parsed.error.flatten()
+
+        z.flattenError(parsed.error)
       );
     }
 
@@ -74,43 +145,76 @@ export async function POST(
       size,
     } = parsed.data;
 
+    // ======================================
     // SANITIZE ORIGINAL FILENAME
+    // ======================================
 
-    const cleanFilename = filename.replace(
-      /[^a-zA-Z0-9._-]/g,
-      '_'
+    const cleanFilename = filename
+      .replace(
+        /[^a-zA-Z0-9._-]/g,
+        '_'
+      )
+      .replace(
+        /^\.+/,
+        ''
+      );
+
+    // ======================================
+    // REJECT INVALID SANITIZED FILENAMES
+    // ======================================
+
+    if (!cleanFilename) {
+      return badInput(
+        'Invalid image filename.'
+      );
+    }
+
+    // ======================================
+    // LOCAL MULTIPART UPLOAD CONFIGURATION
+    //
+    // CLOUDFLARE R2 INTEGRATION WILL BE
+    // IMPLEMENTED IN STEP 14.4
+    //
+    // NEVER RETURN FAKE R2 PUBLIC URLS
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        storage: 'local',
+
+        uploadUrl:
+          '/api/admin/upload',
+
+        method: 'POST',
+
+        uploadType:
+          'multipart/form-data',
+
+        fieldName: 'file',
+
+        filename:
+          cleanFilename,
+
+        contentType,
+
+        size,
+
+        publicUrl: null,
+
+        maxFileSize:
+          MAX_FILE_SIZE,
+
+        message:
+          'Upload the image using multipart form data. The final image URL will be returned after a successful upload.',
+      })
     );
 
-    // USE EXISTING MULTIPART UPLOAD ENDPOINT
-    // DO NOT RETURN FAKE R2 PUBLIC URL
-
-    return NextResponse.json({
-      success: true,
-
-      storage: 'local',
-
-      uploadUrl: '/api/admin/upload',
-
-      method: 'POST',
-
-      uploadType: 'multipart/form-data',
-
-      fieldName: 'file',
-
-      filename: cleanFilename,
-
-      contentType,
-
-      size,
-
-      publicUrl: null,
-
-      maxFileSize: MAX_FILE_SIZE,
-
-      message:
-        'Upload the image using multipart form data. The final image URL will be returned after a successful upload.',
-    });
   } catch (error) {
-    return apiError(error, 'Image upload');
+    return apiError(
+      error,
+      'Image upload'
+    );
   }
 }

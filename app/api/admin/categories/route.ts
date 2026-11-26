@@ -1,104 +1,216 @@
-
 import {
   NextRequest,
   NextResponse,
 } from 'next/server';
 
-import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { prisma } from '@/lib/db';
-import { getSession } from '@/lib/auth';
+
+import { PERMISSIONS } from '@/lib/permissions';
+
+import {
+  adminDenied,
+  apiError,
+  badInput,
+  refreshAdmin,
+  secureAdminResponse,
+} from '@/lib/admin-api';
+
+// ==========================================
+// ROUTE CONFIGURATION
+// ==========================================
+
+export const dynamic = 'force-dynamic';
+
+export const revalidate = 0;
+
+// ==========================================
+// CATEGORY VALIDATION
+// ==========================================
 
 const createCategorySchema = z.object({
   name: z.string().trim().min(1),
+
   slug: z.string().trim().min(1),
+
   label: z.string().trim().min(1),
-  description: z.string().nullable().optional(),
-  imageUrl: z.string().nullable().optional(),
-  displayOrder: z.number().int().default(0),
-  isVisible: z.boolean().default(true),
-  isPublished: z.boolean().default(true),
+
+  description: z
+    .string()
+    .nullable()
+    .optional(),
+
+  imageUrl: z
+    .string()
+    .nullable()
+    .optional(),
+
+  displayOrder: z
+    .number()
+    .int()
+    .default(0),
+
+  isVisible: z
+    .boolean()
+    .default(true),
+
+  isPublished: z
+    .boolean()
+    .default(true),
 });
 
-export async function GET() {
+// ==========================================
+// GET ALL CATEGORIES
+// ==========================================
+
+export async function GET(
+  request: NextRequest
+) {
   try {
-    if (!(await getSession())) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
+    // ======================================
+    // AUTHENTICATION AND VIEW PERMISSION
+    // ======================================
+
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.CATEGORY_VIEW,
+    });
+
+    if (denied) {
+      return denied;
     }
 
-    const categories = await prisma.category.findMany({
-      include: {
-        _count: {
-          select: {
-            productCategories: true,
+    // ======================================
+    // FETCH CATEGORIES WITH PRODUCT COUNTS
+    // ======================================
+
+    const categories =
+      await prisma.category.findMany({
+        include: {
+          _count: {
+            select: {
+              productCategories: true,
+            },
           },
         },
-      },
-      orderBy: [
-        { displayOrder: 'asc' },
-        { createdAt: 'desc' },
-      ],
-    });
 
-    return NextResponse.json({
-      success: true,
-      categories,
-    });
+        orderBy: [
+          {
+            displayOrder: 'asc',
+          },
+
+          {
+            createdAt: 'desc',
+          },
+        ],
+      });
+
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        categories,
+      })
+    );
+
   } catch (error) {
-    console.error('Fetch categories error:', error);
-
-    return NextResponse.json(
-      { error: 'Unable to fetch categories.' },
-      { status: 500 }
+    return apiError(
+      error,
+      'Category'
     );
   }
 }
 
-export async function POST(request: NextRequest) {
+// ==========================================
+// CREATE NEW CATEGORY
+// OWNER AND ADMIN ONLY
+// ==========================================
+
+export async function POST(
+  request: NextRequest
+) {
   try {
-    if (!(await getSession())) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
+
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.CATEGORY_MANAGE,
+    });
+
+    if (denied) {
+      return denied;
     }
+
+    // ======================================
+    // PARSE REQUEST BODY
+    // ======================================
 
     const body = await request
       .json()
       .catch(() => null);
 
-    const result = createCategorySchema.safeParse(body);
+    // ======================================
+    // VALIDATE CATEGORY INPUT
+    // ======================================
+
+    const result =
+      createCategorySchema.safeParse(body);
 
     if (!result.success) {
-      return NextResponse.json(
-        {
-          error: 'Invalid category data.',
-          details: z.flattenError(result.error),
-        },
-        { status: 400 }
+      return badInput(
+        'Invalid category data.',
+
+        z.flattenError(result.error)
       );
     }
 
-    const category = await prisma.category.create({
-      data: result.data,
-    });
+    // ======================================
+    // CREATE CATEGORY
+    // ======================================
 
-    revalidatePath('/');
-    revalidatePath('/admin/categories');
+    const category =
+      await prisma.category.create({
+        data: result.data,
+      });
 
-    return NextResponse.json(
-      {
-        success: true,
-        category,
-      },
-      { status: 201 }
+    // ======================================
+    // REFRESH WEBSITE AND ADMIN PANEL
+    // ======================================
+
+    refreshAdmin('/admin/categories');
+
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json(
+        {
+          success: true,
+
+          category,
+        },
+        {
+          status: 201,
+        }
+      )
     );
-  } catch (error: unknown) {
-    console.error('Create category error:', error);
+
+  } catch (error) {
+    // ======================================
+    // HANDLE DUPLICATE CATEGORY NAME OR SLUG
+    // ======================================
 
     if (
       typeof error === 'object' &&
@@ -106,18 +218,28 @@ export async function POST(request: NextRequest) {
       'code' in error &&
       error.code === 'P2002'
     ) {
-      return NextResponse.json(
-        {
-          error:
-            'Category name or slug already exists.',
-        },
-        { status: 409 }
+      return secureAdminResponse(
+        NextResponse.json(
+          {
+            success: false,
+
+            error:
+              'Category name or slug already exists.',
+          },
+          {
+            status: 409,
+          }
+        )
       );
     }
 
-    return NextResponse.json(
-      { error: 'Unable to create category.' },
-      { status: 500 }
+    // ======================================
+    // CENTRALIZED SECURE ERROR HANDLING
+    // ======================================
+
+    return apiError(
+      error,
+      'Category'
     );
   }
 }
