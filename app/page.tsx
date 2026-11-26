@@ -1,4 +1,3 @@
-
 import type {
   Product,
   Category,
@@ -37,8 +36,6 @@ const defaultSettings: SiteSettings = {
   instagramHandle:
     '@aeronproffessional',
 
-  // WHATSAPP SUPPORT
-
   whatsappNumber: '919819628073',
 
   whatsappMessage:
@@ -46,19 +43,13 @@ const defaultSettings: SiteSettings = {
 
   whatsappUrl: '',
 
-  // EMAIL SUPPORT
-
   contactEmail:
     'tkgroupsofindia@yahoo.co.in',
 
   supportEmail:
     'tkgroupsofindia@yahoo.co.in',
 
-  // WARRANTY SUPPORT
-
   warrantySupportUrl: '',
-
-  // BUSINESS CONTACT
 
   businessPhone: '+91 98196 28073',
 
@@ -84,14 +75,23 @@ const defaultSettings: SiteSettings = {
   footerText: '',
 };
 
-// VALIDATE HTTPS URLS
+// PUBLIC SETTINGS KEYS
+
+const PUBLIC_SETTING_KEYS =
+  Object.keys(defaultSettings);
+
+// HTTPS URL VALIDATION
 
 function isValidHttpsUrl(
   value: string | null | undefined
 ): value is string {
-  if (!value) return false;
+
+  if (!value) {
+    return false;
+  }
 
   try {
+
     const url = new URL(value);
 
     return (
@@ -100,6 +100,7 @@ function isValidHttpsUrl(
       !url.username &&
       !url.password
     );
+
   } catch {
     return false;
   }
@@ -110,6 +111,7 @@ function isValidHttpsUrl(
 function getSafeSupportUrl(
   value: string | undefined
 ): string {
+
   const cleaned = value?.trim() ?? '';
 
   return isValidHttpsUrl(cleaned)
@@ -117,9 +119,10 @@ function getSafeSupportUrl(
     : '';
 }
 
-// LOAD LIVE DATABASE DATA
+// LOAD OPTIMIZED PUBLIC DATABASE DATA
 
 async function getPublicData(): Promise<PublicData> {
+
   const { prisma } = await import('@/lib/db');
 
   const now = new Date();
@@ -136,14 +139,51 @@ async function getPublicData(): Promise<PublicData> {
     // PUBLIC PRODUCTS
 
     prisma.product.findMany({
+
       where: {
         status: {
           in: ['ACTIVE', 'SOLD_OUT'],
         },
       },
 
-      include: {
+      select: {
+        id: true,
+
+        name: true,
+
+        slug: true,
+
+        priceInPaise: true,
+
+        originalPriceInPaise: true,
+
+        status: true,
+
+        isFeatured: true,
+
+        isNew: true,
+
+        displayOrder: true,
+
+        badgeText: true,
+
+        primaryImageUrl: true,
+
+        description: true,
+
+        shortDescription: true,
+
+        publishedAt: true,
+
+        // REQUIRED PRODUCT IMAGES ONLY
+
         images: {
+          select: {
+            url: true,
+
+            isPrimary: true,
+          },
+
           orderBy: [
             {
               displayOrder: 'asc',
@@ -153,8 +193,16 @@ async function getPublicData(): Promise<PublicData> {
             },
           ],
         },
+
+        // REQUIRED PRODUCT SPECIFICATIONS ONLY
 
         specifications: {
+          select: {
+            label: true,
+
+            value: true,
+          },
+
           orderBy: [
             {
               displayOrder: 'asc',
@@ -165,9 +213,11 @@ async function getPublicData(): Promise<PublicData> {
           ],
         },
 
+        // FETCH CATEGORY IDENTIFIERS ONLY
+
         categories: {
-          include: {
-            category: true,
+          select: {
+            categoryId: true,
           },
         },
       },
@@ -185,9 +235,27 @@ async function getPublicData(): Promise<PublicData> {
     // PUBLISHED AND VISIBLE CATEGORIES
 
     prisma.category.findMany({
+
       where: {
         isPublished: true,
+
         isVisible: true,
+      },
+
+      select: {
+        id: true,
+
+        name: true,
+
+        slug: true,
+
+        label: true,
+
+        imageUrl: true,
+
+        description: true,
+
+        displayOrder: true,
       },
 
       orderBy: [
@@ -200,9 +268,10 @@ async function getPublicData(): Promise<PublicData> {
       ],
     }),
 
-    // LIVE HOMEPAGE BANNERS
+    // ACTIVE AND SCHEDULED HOMEPAGE BANNERS
 
     prisma.homepageBanner.findMany({
+
       where: {
         isActive: true,
 
@@ -235,6 +304,22 @@ async function getPublicData(): Promise<PublicData> {
         ],
       },
 
+      select: {
+        id: true,
+
+        eyebrow: true,
+
+        title: true,
+
+        description: true,
+
+        imageUrl: true,
+
+        buttonLabel: true,
+
+        buttonTarget: true,
+      },
+
       orderBy: [
         {
           displayOrder: 'asc',
@@ -245,11 +330,19 @@ async function getPublicData(): Promise<PublicData> {
       ],
     }),
 
-    // WEBSITE SETTINGS
+    // PUBLIC WEBSITE SETTINGS ONLY
 
     prisma.siteSetting.findMany({
+
+      where: {
+        key: {
+          in: PUBLIC_SETTING_KEYS,
+        },
+      },
+
       select: {
         key: true,
+
         value: true,
       },
     }),
@@ -257,8 +350,15 @@ async function getPublicData(): Promise<PublicData> {
     // ACTIVE FAQS
 
     prisma.fAQ.findMany({
+
       where: {
         isActive: true,
+      },
+
+      select: {
+        question: true,
+
+        answer: true,
       },
 
       orderBy: [
@@ -271,15 +371,34 @@ async function getPublicData(): Promise<PublicData> {
       ],
     }),
 
-    // ACTIVE MARKETPLACE LINKS
+    // ACTIVE GLOBAL MARKETPLACE LINKS
 
     prisma.marketplace.findMany({
+
       where: {
         isActive: true,
 
         url: {
           not: null,
         },
+      },
+
+      select: {
+        id: true,
+
+        name: true,
+
+        slug: true,
+
+        url: true,
+
+        tagline: true,
+
+        badgeText: true,
+
+        badgeColor: true,
+
+        buttonText: true,
       },
 
       orderBy: [
@@ -293,10 +412,13 @@ async function getPublicData(): Promise<PublicData> {
     }),
   ]);
 
-  // PUBLIC CATEGORY LOOKUP
+  // CENTRALIZED PUBLIC CATEGORY LOOKUP
 
-  const visibleCategoryIds = new Set(
-    dbCategories.map((category) => category.id)
+  const categoryLookup = new Map(
+    dbCategories.map((category) => [
+      category.id,
+      category,
+    ])
   );
 
   // GLOBAL MARKETPLACE LINKS
@@ -307,13 +429,18 @@ async function getPublicData(): Promise<PublicData> {
         isValidHttpsUrl(marketplace.url)
       )
       .map((marketplace, index) => ({
-        marketplaceId: marketplace.id,
 
-        marketplaceName: marketplace.name,
+        marketplaceId:
+          marketplace.id,
 
-        marketplaceSlug: marketplace.slug,
+        marketplaceName:
+          marketplace.name,
 
-        url: marketplace.url!,
+        marketplaceSlug:
+          marketplace.slug,
+
+        url:
+          marketplace.url!,
 
         tagline:
           marketplace.tagline ?? undefined,
@@ -327,21 +454,27 @@ async function getPublicData(): Promise<PublicData> {
         buttonText:
           marketplace.buttonText ?? undefined,
 
-        displayOrder: index,
+        displayOrder:
+          index,
       }));
 
   // MAP PUBLIC PRODUCTS
 
-  const products: Product[] = dbProducts.map(
-    (product) => {
+  const products: Product[] =
+    dbProducts.map((product) => {
 
-      // GET ALL VISIBLE ASSIGNED CATEGORIES
+      // RESOLVE VISIBLE PRODUCT CATEGORIES
 
       const assignedCategories =
         product.categories
-          .map((item) => item.category)
-          .filter((category) =>
-            visibleCategoryIds.has(category.id)
+          .map((item) =>
+            categoryLookup.get(item.categoryId)
+          )
+          .filter(
+            (
+              category
+            ): category is (typeof dbCategories)[number] =>
+              category !== undefined
           )
           .sort(
             (a, b) =>
@@ -349,25 +482,21 @@ async function getPublicData(): Promise<PublicData> {
               a.id.localeCompare(b.id)
           );
 
-      // REMOVE DUPLICATE CATEGORY IDS
-
-      const categoryIds = Array.from(
-        new Set(
+      const categoryIds = [
+        ...new Set(
           assignedCategories.map(
             (category) => category.id
           )
-        )
-      );
+        ),
+      ];
 
-      // GET ALL CATEGORY NAMES
-
-      const categoryNames = Array.from(
-        new Set(
+      const categoryNames = [
+        ...new Set(
           assignedCategories.map(
             (category) => category.name
           )
-        )
-      );
+        ),
+      ];
 
       // PRIMARY CATEGORY
 
@@ -382,13 +511,15 @@ async function getPublicData(): Promise<PublicData> {
         ) ?? product.images[0];
 
       return {
-        id: product.id,
 
-        name: product.name,
+        id:
+          product.id,
 
-        slug: product.slug,
+        name:
+          product.name,
 
-        // PRIMARY CATEGORY
+        slug:
+          product.slug,
 
         category:
           primaryCategory?.name ?? '',
@@ -396,13 +527,9 @@ async function getPublicData(): Promise<PublicData> {
         categoryId:
           primaryCategory?.id,
 
-        // MULTIPLE CATEGORY SUPPORT
-
         categoryIds,
 
         categoryNames,
-
-        // ACCURATE PRODUCT PRICING
 
         price:
           product.priceInPaise / 100,
@@ -415,43 +542,43 @@ async function getPublicData(): Promise<PublicData> {
         status:
           product.status as Product['status'],
 
-        isFeatured: product.isFeatured,
+        isFeatured:
+          product.isFeatured,
 
-        isNew: product.isNew,
+        isNew:
+          product.isNew,
 
-        displayOrder: product.displayOrder,
+        displayOrder:
+          product.displayOrder,
 
         badge:
           product.badgeText ?? undefined,
-
-        // PRODUCT IMAGES
 
         image:
           primaryImage?.url ??
           product.primaryImageUrl ??
           '',
 
-        images: product.images.map(
-          (image) => image.url
-        ),
+        images:
+          product.images.map(
+            (image) => image.url
+          ),
 
-        // PRODUCT DESCRIPTION
-
-        description: product.description,
+        description:
+          product.description,
 
         shortDescription:
           product.shortDescription ?? undefined,
 
-        // PRODUCT SPECIFICATIONS
+        specs:
+          product.specifications.map(
+            (specification) =>
+              specification.value
+                ? `${specification.label}: ${specification.value}`
+                : specification.label
+          ),
 
-        specs: product.specifications.map(
-          (specification) =>
-            specification.value
-              ? `${specification.label}: ${specification.value}`
-              : specification.label
-        ),
-
-        // CENTRAL MARKETPLACES
+        // SHARED GLOBAL MARKETPLACE LINKS
 
         marketplaceLinks:
           globalMarketplaceLinks.map(
@@ -463,42 +590,54 @@ async function getPublicData(): Promise<PublicData> {
         publishedAt:
           product.publishedAt?.toISOString(),
       };
-    }
-  );
+    });
 
   // MAP PUBLIC CATEGORIES
 
   const categories: Category[] =
     dbCategories.map((category) => ({
-      id: category.id,
 
-      name: category.name,
+      id:
+        category.id,
 
-      slug: category.slug,
+      name:
+        category.name,
 
-      label: category.label,
+      slug:
+        category.slug,
 
-      img: category.imageUrl ?? '',
+      label:
+        category.label,
+
+      img:
+        category.imageUrl ?? '',
 
       description:
         category.description ?? undefined,
 
-      displayOrder: category.displayOrder,
+      displayOrder:
+        category.displayOrder,
     }));
 
   // MAP HOMEPAGE BANNERS
 
   const promoSlides: PromoSlide[] =
     dbBanners.map((banner) => ({
-      id: banner.id,
 
-      eyebrow: banner.eyebrow,
+      id:
+        banner.id,
 
-      title: banner.title,
+      eyebrow:
+        banner.eyebrow,
 
-      copy: banner.description,
+      title:
+        banner.title,
 
-      img: banner.imageUrl,
+      copy:
+        banner.description,
+
+      img:
+        banner.imageUrl,
 
       buttonLabel:
         banner.buttonLabel ?? undefined,
@@ -507,12 +646,13 @@ async function getPublicData(): Promise<PublicData> {
         banner.buttonTarget ?? undefined,
     }));
 
-  // CONVERT DATABASE SETTINGS
+  // CONVERT SAVED WEBSITE SETTINGS
 
   const settingsMap: Record<string, string> =
     Object.fromEntries(
       dbSettings.map((setting) => [
         setting.key,
+
         setting.value ?? '',
       ])
     );
@@ -521,16 +661,12 @@ async function getPublicData(): Promise<PublicData> {
 
   const settings: SiteSettings = {
 
-    // BRAND INFORMATION
-
     brandName:
       settingsMap.brandName ??
       defaultSettings.brandName,
 
     logoUrl:
       settingsMap.logoUrl || null,
-
-    // INSTAGRAM
 
     instagramUrl:
       settingsMap.instagramUrl ??
@@ -539,8 +675,6 @@ async function getPublicData(): Promise<PublicData> {
     instagramHandle:
       settingsMap.instagramHandle ??
       defaultSettings.instagramHandle,
-
-    // WHATSAPP SUPPORT
 
     whatsappNumber:
       settingsMap.whatsappNumber ??
@@ -555,8 +689,6 @@ async function getPublicData(): Promise<PublicData> {
         settingsMap.whatsappUrl
       ),
 
-    // EMAIL SUPPORT
-
     contactEmail:
       settingsMap.contactEmail ??
       defaultSettings.contactEmail,
@@ -565,20 +697,14 @@ async function getPublicData(): Promise<PublicData> {
       settingsMap.supportEmail ??
       defaultSettings.supportEmail,
 
-    // WARRANTY SUPPORT URL
-
     warrantySupportUrl:
       getSafeSupportUrl(
         settingsMap.warrantySupportUrl
       ),
 
-    // BUSINESS CONTACT
-
     businessPhone:
       settingsMap.businessPhone ??
       defaultSettings.businessPhone,
-
-    // FOOTER SETTINGS
 
     copyrightText:
       settingsMap.copyrightText ??
@@ -586,8 +712,6 @@ async function getPublicData(): Promise<PublicData> {
 
     footerText:
       settingsMap.footerText ?? '',
-
-    // ANNOUNCEMENT BAR
 
     announcementBarText:
       settingsMap.announcementBarText ??
@@ -598,8 +722,6 @@ async function getPublicData(): Promise<PublicData> {
         ? defaultSettings.announcementBarVisible
         : settingsMap.announcementBarVisible === 'true',
 
-    // SEO SETTINGS
-
     seoTitle:
       settingsMap.seoTitle ??
       defaultSettings.seoTitle,
@@ -608,27 +730,21 @@ async function getPublicData(): Promise<PublicData> {
       settingsMap.seoDescription ??
       defaultSettings.seoDescription,
 
-    // PRICE DISCLAIMER
-
     priceDisclaimer:
       settingsMap.priceDisclaimer ??
       defaultSettings.priceDisclaimer,
   };
 
-  // MAP CUSTOMER CARE FAQS
-
-  const faqs = dbFaqs.map((faq) => ({
-    question: faq.question,
-
-    answer: faq.answer,
-  }));
-
   return {
     products,
+
     categories,
+
     promoSlides,
+
     settings,
-    faqs,
+
+    faqs: dbFaqs,
   };
 }
 
@@ -639,8 +755,6 @@ function WebsiteUnavailable() {
     <main className="flex min-h-screen items-center justify-center bg-[#faf9f6] px-5 py-12">
 
       <div className="w-full max-w-lg text-center">
-
-        {/* AERON BRAND */}
 
         <div className="mb-10">
 
@@ -654,11 +768,7 @@ function WebsiteUnavailable() {
 
         </div>
 
-        {/* DECORATIVE DIVIDER */}
-
         <div className="mx-auto mb-8 h-px w-16 bg-[#977447]" />
-
-        {/* ERROR MESSAGE */}
 
         <h1 className="text-2xl font-semibold text-gray-900 sm:text-3xl">
           Temporarily Unavailable
@@ -668,8 +778,6 @@ function WebsiteUnavailable() {
           Our website is experiencing a temporary
           technical issue. Please try again shortly.
         </p>
-
-        {/* RETRY WEBSITE */}
 
         <form
           action="/"
@@ -686,8 +794,6 @@ function WebsiteUnavailable() {
 
         </form>
 
-        {/* FOOTER */}
-
         <p className="mt-12 text-[10px] uppercase tracking-widest text-gray-400">
           AERON PROFESSIONAL
         </p>
@@ -701,14 +807,19 @@ function WebsiteUnavailable() {
 // MAIN PUBLIC WEBSITE
 
 export default async function Home() {
+
   let data: PublicData;
 
   try {
+
     data = await getPublicData();
-  } catch (error) {
+
+  } catch {
+
+    // NEVER EXPOSE SENSITIVE DATABASE ERROR DETAILS
+
     console.error(
-      'Unable to load AERON storefront:',
-      error
+      '[STOREFRONT] Unable to load public website data.'
     );
 
     return <WebsiteUnavailable />;
