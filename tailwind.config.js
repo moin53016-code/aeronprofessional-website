@@ -1,9 +1,11 @@
 /** @type {import('tailwindcss').Config} */
-module.exports = {
+
+const config = {
   content: [
     './app/**/*.{js,ts,jsx,tsx}',
     './components/**/*.{js,ts,jsx,tsx}',
   ],
+
   theme: {
     extend: {
       colors: {
@@ -11,10 +13,14 @@ module.exports = {
         ink: '#101112',
         cream: '#f6f4ef',
       },
+
       fontFamily: {
         sans: ['Arial', 'sans-serif'],
       },
     },
   },
+
   plugins: [],
 };
+
+export default config;

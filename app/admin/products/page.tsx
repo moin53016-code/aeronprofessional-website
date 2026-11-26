@@ -1,4 +1,3 @@
-
 import Link from 'next/link';
 
 import {
@@ -9,7 +8,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '@/generated/prisma/client';
 
 import { prisma } from '@/lib/db';
 import { requireAdminPage } from '@/lib/admin-page';
@@ -35,7 +34,9 @@ const PRODUCT_STATUSES = [
 type ProductStatus =
   (typeof PRODUCT_STATUSES)[number];
 
+// ==========================================
 // VALIDATE PRODUCT STATUS
+// ==========================================
 
 function isValidStatus(
   status: string
@@ -45,7 +46,9 @@ function isValidStatus(
   );
 }
 
+// ==========================================
 // FORMAT PRICE FROM PAISE TO INR
+// ==========================================
 
 function formatPrice(paise: number) {
   return new Intl.NumberFormat('en-IN', {
@@ -56,7 +59,9 @@ function formatPrice(paise: number) {
   }).format(paise / 100);
 }
 
+// ==========================================
 // LOAD PRODUCTS FROM DATABASE
+// ==========================================
 
 async function getProducts(
   search: string,
@@ -126,7 +131,9 @@ async function getProducts(
   });
 }
 
+// ==========================================
 // ADMIN PRODUCTS PAGE
+// ==========================================
 
 export default async function ProductsPage({
   searchParams,

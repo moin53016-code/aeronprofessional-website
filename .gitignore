@@ -1,4 +1,3 @@
-
 # ==========================================
 # AERON PROFESSIONAL - GIT IGNORE
 # ==========================================
@@ -7,6 +6,10 @@
 
 node_modules/
 .pnpm-store/
+
+# GENERATED PRISMA CLIENT
+
+/generated/prisma/
 
 # NEXT.JS BUILD FILES
 
@@ -57,13 +60,14 @@ coverage/
 Thumbs.db
 Desktop.ini
 
-# TEMPORARY FILES
+# TEMPORARY AND BACKUP FILES
 
 *.tmp
 *.temp
 *.swp
 *.swo
 *.bak
+*.backup
 
 # IDE LOCAL HISTORY
 
@@ -75,3 +79,9 @@ Desktop.ini
 *.key
 *.p12
 *.pfx
+
+# SECURITY AUDIT REPORTS
+
+npm-audit.json
+npm-audit-report.json
+gitleaks-report.json

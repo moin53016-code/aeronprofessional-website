@@ -1,71 +1,330 @@
-
 import 'server-only';
 
-import { NextResponse } from 'next/server';
+import {
+  NextRequest,
+  NextResponse,
+} from 'next/server';
+
 import { revalidatePath } from 'next/cache';
+
 import { getSession } from '@/lib/auth';
+import { csrfGuard } from '@/lib/csrf';
 
-// Verify the admin database session.
+import {
+  isValidRole,
+  hasPermission,
+  hasAllPermissions,
+  hasAnyPermission,
+} from '@/lib/permissions';
 
-export async function adminDenied() {
-  return (await getSession())
-    ? null
-    : NextResponse.json(
-        {
-          error: 'Unauthorized. Please log in.',
-        },
-        { status: 401 }
-      );
+import type { Permission } from '@/lib/permissions';
+import type { Role } from '@/generated/prisma/enums';
+
+// ==========================================
+// SECURITY TYPES
+// ==========================================
+
+interface AdminSecurityOptions {
+  request?: NextRequest;
+
+  allowedRoles?: readonly Role[];
+
+  permission?: Permission;
+
+  permissions?: readonly Permission[];
+
+  permissionMode?: 'all' | 'any';
 }
 
-// Handle invalid API input.
+// ==========================================
+// SECURE RESPONSE HEADERS
+// ==========================================
+
+export function secureAdminResponse(
+  response: NextResponse
+): NextResponse {
+  response.headers.set(
+    'Cache-Control',
+    'no-store, no-cache, must-revalidate, private'
+  );
+
+  response.headers.set(
+    'Pragma',
+    'no-cache'
+  );
+
+  response.headers.set(
+    'Expires',
+    '0'
+  );
+
+  response.headers.set(
+    'X-Content-Type-Options',
+    'nosniff'
+  );
+
+  response.headers.set(
+    'X-Robots-Tag',
+    'noindex, nofollow, noarchive'
+  );
+
+  return response;
+}
+
+// ==========================================
+// UNAUTHORIZED RESPONSE
+// ==========================================
+
+export function unauthorizedResponse() {
+  return secureAdminResponse(
+    NextResponse.json(
+      {
+        success: false,
+
+        error: 'Unauthorized. Please log in.',
+      },
+      {
+        status: 401,
+      }
+    )
+  );
+}
+
+// ==========================================
+// FORBIDDEN RESPONSE
+// ==========================================
+
+export function forbiddenResponse() {
+  return secureAdminResponse(
+    NextResponse.json(
+      {
+        success: false,
+
+        error:
+          'You do not have permission to perform this action.',
+      },
+      {
+        status: 403,
+      }
+    )
+  );
+}
+
+// ==========================================
+// AUTHENTICATION AND AUTHORIZATION
+// ==========================================
+
+export async function adminDenied(
+  options: AdminSecurityOptions = {}
+): Promise<NextResponse | null> {
+  // ========================================
+  // VERIFY REQUEST ORIGIN
+  // ========================================
+
+  if (options.request) {
+    const denied = csrfGuard(
+      options.request
+    );
+
+    if (denied) {
+      return secureAdminResponse(denied);
+    }
+  }
+
+  // ========================================
+  // VERIFY DATABASE SESSION
+  // ========================================
+
+  const session = await getSession();
+
+  if (!session) {
+    return unauthorizedResponse();
+  }
+
+  // ========================================
+  // VERIFY ACTIVE ADMIN ACCOUNT
+  // ========================================
+
+  if (!session.user.isActive) {
+    return unauthorizedResponse();
+  }
+
+  const role = session.user.role;
+
+  // ========================================
+  // REJECT INVALID ADMIN ROLES
+  // ========================================
+
+  if (!isValidRole(role)) {
+    return forbiddenResponse();
+  }
+
+  // ========================================
+  // CHECK ROLE RESTRICTIONS
+  // ========================================
+
+  if (
+    options.allowedRoles &&
+    !options.allowedRoles.includes(role)
+  ) {
+    return forbiddenResponse();
+  }
+
+  // ========================================
+  // CHECK INDIVIDUAL PERMISSION
+  // ========================================
+
+  if (
+    options.permission &&
+    !hasPermission(
+      role,
+      options.permission
+    )
+  ) {
+    return forbiddenResponse();
+  }
+
+  // ========================================
+  // CHECK MULTIPLE PERMISSIONS
+  // ========================================
+
+  if (options.permissions) {
+    const permitted =
+      options.permissionMode === 'any'
+        ? hasAnyPermission(
+            role,
+            options.permissions
+          )
+        : hasAllPermissions(
+            role,
+            options.permissions
+          );
+
+    if (!permitted) {
+      return forbiddenResponse();
+    }
+  }
+
+  // ========================================
+  // AUTHORIZED REQUEST
+  // ========================================
+
+  return null;
+}
+
+// ==========================================
+// HANDLE INVALID API INPUT
+// ==========================================
 
 export function badInput(
   error = 'Invalid input',
   details?: unknown
 ) {
-  return NextResponse.json(
-    {
-      error,
-      details,
-    },
-    { status: 400 }
+  return secureAdminResponse(
+    NextResponse.json(
+      {
+        success: false,
+
+        error,
+
+        details,
+      },
+      {
+        status: 400,
+      }
+    )
   );
 }
 
-// Handle database and API errors.
+// ==========================================
+// EXTRACT SAFE DATABASE ERROR CODE
+// ==========================================
+
+function getDatabaseErrorCode(
+  error: unknown
+): string | undefined {
+  if (
+    !error ||
+    typeof error !== 'object' ||
+    !('code' in error)
+  ) {
+    return undefined;
+  }
+
+  const code = error.code;
+
+  if (
+    typeof code === 'string' &&
+    /^P[0-9]{4}$/.test(code)
+  ) {
+    return code;
+  }
+
+  return undefined;
+}
+
+// ==========================================
+// CENTRALIZED API ERROR HANDLING
+// ==========================================
 
 export function apiError(
   error: unknown,
   resource: string
 ) {
-  console.error(`${resource} API error:`, error);
-
   const code =
-    error &&
-    typeof error === 'object' &&
-    'code' in error
-      ? error.code
-      : undefined;
+    getDatabaseErrorCode(error);
+
+  // SAFE ERROR LOGGING
+
+  console.error(
+    `[ADMIN API] ${resource} request failed.`,
+    {
+      code: code ?? 'UNKNOWN',
+    }
+  );
+
+  // ========================================
+  // RECORD NOT FOUND
+  // ========================================
 
   if (code === 'P2025') {
-    return NextResponse.json(
-      {
-        error: `${resource} not found`,
-      },
-      { status: 404 }
+    return secureAdminResponse(
+      NextResponse.json(
+        {
+          success: false,
+
+          error: `${resource} not found`,
+        },
+        {
+          status: 404,
+        }
+      )
     );
   }
 
+  // ========================================
+  // UNIQUE CONSTRAINT VIOLATION
+  // ========================================
+
   if (code === 'P2002') {
-    return NextResponse.json(
-      {
-        error:
-          'A record with these unique details already exists',
-      },
-      { status: 409 }
+    return secureAdminResponse(
+      NextResponse.json(
+        {
+          success: false,
+
+          error:
+            'A record with these unique details already exists',
+        },
+        {
+          status: 409,
+        }
+      )
     );
   }
+
+  // ========================================
+  // INVALID RELATED DATABASE RECORD
+  // ========================================
 
   if (code === 'P2003') {
     return badInput(
@@ -73,17 +332,57 @@ export function apiError(
     );
   }
 
-  return NextResponse.json(
-    {
-      error: `Unable to process ${resource.toLowerCase()}`,
-    },
-    { status: 500 }
+  // ========================================
+  // DATABASE CONNECTION ERRORS
+  // ========================================
+
+  if (
+    code === 'P1001' ||
+    code === 'P1002' ||
+    code === 'P1017' ||
+    code === 'P2024'
+  ) {
+    return secureAdminResponse(
+      NextResponse.json(
+        {
+          success: false,
+
+          error:
+            'Service temporarily unavailable. Please try again later.',
+        },
+        {
+          status: 503,
+        }
+      )
+    );
+  }
+
+  // ========================================
+  // GENERIC INTERNAL SERVER ERROR
+  // ========================================
+
+  return secureAdminResponse(
+    NextResponse.json(
+      {
+        success: false,
+
+        error:
+          `Unable to process ${resource.toLowerCase()}`,
+      },
+      {
+        status: 500,
+      }
+    )
   );
 }
 
-// Refresh website and admin data.
+// ==========================================
+// REFRESH WEBSITE AND ADMIN DATA
+// ==========================================
 
-export function refreshAdmin(path: string) {
+export function refreshAdmin(
+  path: string
+) {
   revalidatePath('/');
   revalidatePath('/admin');
   revalidatePath(path);

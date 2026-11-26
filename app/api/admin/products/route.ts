@@ -1,17 +1,31 @@
-
 import { NextRequest, NextResponse } from 'next/server';
-import { Prisma } from '@prisma/client';
+
+import type { Prisma } from '@/generated/prisma/client';
+
 import { prisma } from '@/lib/db';
 import { z } from 'zod';
+
+import { PERMISSIONS } from '@/lib/permissions';
 
 import {
   adminDenied,
   apiError,
   badInput,
   refreshAdmin,
+  secureAdminResponse,
 } from '@/lib/admin-api';
 
+// ==========================================
+// ROUTE CONFIGURATION
+// ==========================================
+
+export const dynamic = 'force-dynamic';
+
+export const revalidate = 0;
+
+// ==========================================
 // IMAGE URL VALIDATION
+// ==========================================
 
 const imageUrlSchema = z.string().refine(
   (value) => {
@@ -26,6 +40,7 @@ const imageUrlSchema = z.string().refine(
         url.protocol === 'https:' ||
         url.protocol === 'http:'
       );
+
     } catch {
       return false;
     }
@@ -33,7 +48,9 @@ const imageUrlSchema = z.string().refine(
   'Use an HTTP(S) image URL or a valid /uploads/ path.'
 );
 
+// ==========================================
 // PRODUCT STATUS
+// ==========================================
 
 const statusSchema = z.enum([
   'DRAFT',
@@ -42,10 +59,13 @@ const statusSchema = z.enum([
   'ARCHIVED',
 ]);
 
+// ==========================================
 // PRODUCT VALIDATION
+// ==========================================
 
 const createProductSchema = z.object({
   name: z.string().trim().min(1),
+
   slug: z.string().trim().min(1),
 
   sku: z.string().nullable().optional(),
@@ -74,6 +94,7 @@ const createProductSchema = z.object({
   status: statusSchema.default('DRAFT'),
 
   isFeatured: z.boolean().default(false),
+
   isNew: z.boolean().default(false),
 
   displayOrder: z.number().int().default(0),
@@ -142,6 +163,7 @@ const createProductSchema = z.object({
                 url.protocol === 'https:' ||
                 url.protocol === 'http:'
               );
+
             } catch {
               return false;
             }
@@ -162,7 +184,9 @@ const createProductSchema = z.object({
     .default([]),
 });
 
+// ==========================================
 // PRODUCT RELATIONS
+// ==========================================
 
 const productInclude = {
   images: {
@@ -190,30 +214,53 @@ const productInclude = {
   },
 } as const;
 
+// ==========================================
 // GET ALL PRODUCTS
+// ==========================================
 
 export async function GET(
   request: NextRequest
 ) {
   try {
-    const denied = await adminDenied();
+    // ======================================
+    // AUTHENTICATION AND PERMISSION CHECK
+    // ======================================
 
-    if (denied) return denied;
+    const denied = await adminDenied({
+      request,
 
-    const { searchParams } = new URL(request.url);
+      permission:
+        PERMISSIONS.PRODUCT_VIEW,
+    });
+
+    if (denied) {
+      return denied;
+    }
+
+    // ======================================
+    // READ SEARCH PARAMETERS
+    // ======================================
+
+    const { searchParams } = new URL(
+      request.url
+    );
 
     const rawStatus =
       searchParams.get('status');
 
     const search =
-      searchParams.get('search')?.trim();
+      searchParams.get('search')
+        ?.trim()
+        .slice(0, 200);
 
     const categoryId =
       searchParams.get('categoryId');
 
     const where: Prisma.ProductWhereInput = {};
 
+    // ======================================
     // STATUS FILTER
+    // ======================================
 
     if (rawStatus) {
       const parsedStatus =
@@ -228,7 +275,9 @@ export async function GET(
       where.status = parsedStatus.data;
     }
 
+    // ======================================
     // PRODUCT SEARCH
+    // ======================================
 
     if (search) {
       where.OR = [
@@ -238,12 +287,14 @@ export async function GET(
             mode: 'insensitive',
           },
         },
+
         {
           description: {
             contains: search,
             mode: 'insensitive',
           },
         },
+
         {
           sku: {
             contains: search,
@@ -253,7 +304,9 @@ export async function GET(
       ];
     }
 
+    // ======================================
     // CATEGORY FILTER
+    // ======================================
 
     if (categoryId) {
       where.categories = {
@@ -263,39 +316,73 @@ export async function GET(
       };
     }
 
-    const products = await prisma.product.findMany({
-      where,
+    // ======================================
+    // LOAD PRODUCTS
+    // ======================================
 
-      include: productInclude,
+    const products =
+      await prisma.product.findMany({
+        where,
 
-      orderBy: [
-        {
-          displayOrder: 'asc',
-        },
-        {
-          createdAt: 'desc',
-        },
-      ],
-    });
+        include: productInclude,
 
-    return NextResponse.json({
-      success: true,
-      products,
-    });
+        orderBy: [
+          {
+            displayOrder: 'asc',
+          },
+
+          {
+            createdAt: 'desc',
+          },
+        ],
+      });
+
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json({
+        success: true,
+
+        products,
+      })
+    );
+
   } catch (error) {
-    return apiError(error, 'Product');
+    return apiError(
+      error,
+      'Product'
+    );
   }
 }
 
+// ==========================================
 // CREATE NEW PRODUCT
+// ==========================================
 
 export async function POST(
   request: NextRequest
 ) {
   try {
-    const denied = await adminDenied();
+    // ======================================
+    // AUTHENTICATION, CSRF AND PERMISSIONS
+    // ======================================
 
-    if (denied) return denied;
+    const denied = await adminDenied({
+      request,
+
+      permission:
+        PERMISSIONS.PRODUCT_CREATE,
+    });
+
+    if (denied) {
+      return denied;
+    }
+
+    // ======================================
+    // VALIDATE REQUEST BODY
+    // ======================================
 
     const body = await request
       .json()
@@ -319,7 +406,9 @@ export async function POST(
       ...productData
     } = parsed.data;
 
+    // ======================================
     // PRICE VALIDATION
+    // ======================================
 
     if (
       productData.originalPriceInPaise != null &&
@@ -331,13 +420,17 @@ export async function POST(
       );
     }
 
+    // ======================================
     // PREVENT DUPLICATE CATEGORY ASSIGNMENTS
+    // ======================================
 
     const uniqueCategoryIds = [
       ...new Set(categoryIds),
     ];
 
-    // PREVENT DUPLICATE MARKETPLACE ASSIGNMENTS
+    // ======================================
+    // PREVENT DUPLICATE MARKETPLACE LINKS
+    // ======================================
 
     const uniqueMarketplaceLinks = [
       ...new Map(
@@ -348,7 +441,9 @@ export async function POST(
       ).values(),
     ];
 
+    // ======================================
     // CREATE PRODUCT AND RELATED RECORDS
+    // ======================================
 
     const product = await prisma.product.create({
       data: {
@@ -362,17 +457,25 @@ export async function POST(
         images: {
           create: images.map((image) => ({
             url: image.url,
+
             altText: image.altText,
-            displayOrder: image.displayOrder,
-            isPrimary: image.isPrimary,
+
+            displayOrder:
+              image.displayOrder,
+
+            isPrimary:
+              image.isPrimary,
           })),
         },
 
         specifications: {
           create: specifications.map((spec) => ({
             label: spec.label,
+
             value: spec.value,
-            displayOrder: spec.displayOrder,
+
+            displayOrder:
+              spec.displayOrder,
           })),
         },
 
@@ -391,7 +494,9 @@ export async function POST(
                 link.marketplaceId,
 
               url: link.url,
-              isActive: link.isActive,
+
+              isActive:
+                link.isActive,
 
               displayOrder:
                 link.displayOrder,
@@ -403,22 +508,36 @@ export async function POST(
       include: productInclude,
     });
 
+    // ======================================
     // REFRESH WEBSITE AND ADMIN PANEL
+    // ======================================
 
     refreshAdmin('/admin/products');
 
-    return NextResponse.json(
-      {
-        success: true,
-        product,
-        message:
-          'Product created successfully.',
-      },
-      {
-        status: 201,
-      }
+    // ======================================
+    // SECURE SUCCESS RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      NextResponse.json(
+        {
+          success: true,
+
+          product,
+
+          message:
+            'Product created successfully.',
+        },
+        {
+          status: 201,
+        }
+      )
     );
+
   } catch (error) {
-    return apiError(error, 'Product');
+    return apiError(
+      error,
+      'Product'
+    );
   }
 }

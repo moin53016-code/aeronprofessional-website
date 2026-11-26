@@ -1,19 +1,45 @@
-import { PrismaClient } from '@prisma/client';
+import 'dotenv/config';
 
-const prisma = new PrismaClient();
+import { PrismaClient } from '../generated/prisma/client';
+import { PrismaNeon } from '@prisma/adapter-neon';
+
+// ==========================================
+// DATABASE CONNECTION
+// ==========================================
+
+const connectionString = process.env.DATABASE_URL;
+
+if (!connectionString) {
+  throw new Error('DATABASE_URL is missing from environment variables.');
+}
+
+const adapter = new PrismaNeon({
+  connectionString,
+});
+
+const prisma = new PrismaClient({
+  adapter,
+  log: ['error'],
+});
+
+// ==========================================
+// IMAGE HELPER
+// ==========================================
 
 const unsplashImage = (id: string): string =>
   `https://images.unsplash.com/${id}?auto=format&fit=crop&w=1000&q=85`;
 
-// ---------------------------------------------------------------------------
-// Categories
-// ---------------------------------------------------------------------------
+// ==========================================
+// CATEGORIES
+// ==========================================
+
 const CATEGORIES = [
   {
     name: 'Straighteners',
     slug: 'straighteners',
     label: 'Hair Straighteners',
-    description: 'Ceramic and titanium hair straighteners for sleek, smooth results.',
+    description:
+      'Ceramic and titanium hair straighteners for sleek, smooth results.',
     imageUrl: unsplashImage('photo-1590439471364-192aa70c0b53'),
     displayOrder: 1,
   },
@@ -21,7 +47,8 @@ const CATEGORIES = [
     name: 'Hair Dryers',
     slug: 'hair-dryers',
     label: 'Hair Dryers',
-    description: 'Powerful professional hair dryers for fast, frizz-free drying.',
+    description:
+      'Powerful professional hair dryers for fast, frizz-free drying.',
     imageUrl: '/images/hair-dryer.png',
     displayOrder: 2,
   },
@@ -29,7 +56,8 @@ const CATEGORIES = [
     name: 'Curling Tools',
     slug: 'curling-tools',
     label: 'Curling Tools',
-    description: 'Professional curling wands and irons for every curl type.',
+    description:
+      'Professional curling wands and irons for every curl type.',
     imageUrl: unsplashImage('photo-1519699047748-de8e457a634e'),
     displayOrder: 3,
   },
@@ -37,7 +65,8 @@ const CATEGORIES = [
     name: 'Hair Crimpers',
     slug: 'hair-crimpers',
     label: 'Hair Crimpers',
-    description: 'Create stunning texture and dimension with AERON crimpers.',
+    description:
+      'Create stunning texture and dimension with AERON crimpers.',
     imageUrl: unsplashImage('photo-1560869713-7d0a29430803'),
     displayOrder: 4,
   },
@@ -45,7 +74,8 @@ const CATEGORIES = [
     name: 'Clippers & Trimmers',
     slug: 'clippers-trimmers',
     label: 'Clippers & Trimmers',
-    description: 'Precision clippers and trimmers for clean grooming.',
+    description:
+      'Precision clippers and trimmers for clean grooming.',
     imageUrl: unsplashImage('photo-1599351431202-1e0f0137899a'),
     displayOrder: 5,
   },
@@ -53,7 +83,8 @@ const CATEGORIES = [
     name: 'Hot Air Brushes',
     slug: 'hot-air-brushes',
     label: 'Hot Air Brushes',
-    description: 'Style and dry simultaneously with versatile hot air brushes.',
+    description:
+      'Style and dry simultaneously with versatile hot air brushes.',
     imageUrl: unsplashImage('photo-1527799820374-dcf8d9d4a388'),
     displayOrder: 6,
   },
@@ -61,7 +92,8 @@ const CATEGORIES = [
     name: 'Professional Brushes',
     slug: 'professional-brushes',
     label: 'Professional Brushes',
-    description: 'Salon-quality brushes for everyday professional styling.',
+    description:
+      'Salon-quality brushes for everyday professional styling.',
     imageUrl: unsplashImage('photo-1590159763121-7c9fd312190d'),
     displayOrder: 7,
   },
@@ -69,25 +101,28 @@ const CATEGORIES = [
     name: 'Salon Accessories',
     slug: 'salon-accessories',
     label: 'Salon Accessories',
-    description: 'Essential accessories to complete your professional styling station.',
+    description:
+      'Essential accessories to complete your professional styling station.',
     imageUrl: unsplashImage('photo-1521590832167-7bcbfaa6381f'),
     displayOrder: 8,
   },
 ];
 
-// ---------------------------------------------------------------------------
-// Products
-// ---------------------------------------------------------------------------
+// ==========================================
+// PRODUCTS
+// ==========================================
+
 const PRODUCTS = [
   {
     name: 'AERON Pro Ceramic Straightener',
     slug: 'aeron-pro-ceramic-straightener',
     sku: 'AP-STR-001',
-    shortDescription: 'Smooth, sleek results with ceramic styling plates and precision heat control.',
+    shortDescription:
+      'Smooth, sleek results with ceramic styling plates and precision heat control.',
     description:
       'The AERON Pro Ceramic Straightener delivers salon-grade performance for home use. Featuring advanced ceramic-coated plates that distribute heat evenly, this straightener reduces frizz and seals the hair cuticle for a glossy, smooth finish. With adjustable heat settings and a 360° swivel cord, it offers the precision and flexibility that professionals demand.',
-    priceInPaise: 349900,          // ₹3,499
-    originalPriceInPaise: 499900,  // ₹4,999
+    priceInPaise: 349900,
+    originalPriceInPaise: 499900,
     status: 'ACTIVE' as const,
     isFeatured: true,
     isNew: false,
@@ -99,24 +134,32 @@ const PRODUCTS = [
       { label: 'Plate Material', value: 'Ceramic' },
       { label: 'Heat Settings', value: 'Adjustable' },
       { label: 'Cord', value: '360° Swivel' },
-      { label: 'Note', value: 'Demo specifications — verify before launch' },
+      {
+        label: 'Note',
+        value: 'Demo specifications — verify before launch',
+      },
     ],
     buyLinks: {
-      amazon: 'https://www.amazon.in/s?k=AERON+Pro+Ceramic+Straightener', // NOTE: replace with real URL
-      flipkart: 'https://www.flipkart.com/search?q=AERON+Pro+Ceramic+Straightener', // NOTE: replace with real URL
-      nykaa: 'https://www.nykaa.com/search/result/?q=AERON+Pro+Ceramic+Straightener', // NOTE: replace with real URL
-      myntra: 'https://www.myntra.com/aeron-straightener', // NOTE: replace with real URL
+      amazon:
+        'https://www.amazon.in/s?k=AERON+Pro+Ceramic+Straightener',
+      flipkart:
+        'https://www.flipkart.com/search?q=AERON+Pro+Ceramic+Straightener',
+      nykaa:
+        'https://www.nykaa.com/search/result/?q=AERON+Pro+Ceramic+Straightener',
+      myntra:
+        'https://www.myntra.com/aeron-straightener',
     },
   },
   {
     name: 'AERON Velocity Hair Dryer',
     slug: 'aeron-velocity-hair-dryer',
     sku: 'AP-DRY-001',
-    shortDescription: 'A professional-inspired dryer designed for everyday styling confidence.',
+    shortDescription:
+      'A professional-inspired dryer designed for everyday styling confidence.',
     description:
       'The AERON Velocity Hair Dryer combines powerful airflow with intelligent heat management. Its ergonomic design reduces wrist fatigue during extended styling sessions, while the included concentrator attachment allows for precise, frizz-free blowouts. The cool-shot button locks in your style for long-lasting results.',
-    priceInPaise: 429900,          // ₹4,299
-    originalPriceInPaise: 599900,  // ₹5,999
+    priceInPaise: 429900,
+    originalPriceInPaise: 599900,
     status: 'ACTIVE' as const,
     isFeatured: true,
     isNew: false,
@@ -128,23 +171,30 @@ const PRODUCTS = [
       { label: 'Airflow', value: 'Multiple Settings' },
       { label: 'Attachments', value: 'Concentrator' },
       { label: 'Handle', value: 'Ergonomic Grip' },
-      { label: 'Note', value: 'Demo specifications — verify before launch' },
+      {
+        label: 'Note',
+        value: 'Demo specifications — verify before launch',
+      },
     ],
     buyLinks: {
-      amazon: 'https://www.amazon.in/s?k=AERON+Velocity+Hair+Dryer', // NOTE: replace with real URL
-      flipkart: 'https://www.flipkart.com/search?q=AERON+Velocity+Hair+Dryer', // NOTE: replace with real URL
-      nykaa: 'https://www.nykaa.com/search/result/?q=AERON+Velocity+Hair+Dryer', // NOTE: replace with real URL
+      amazon:
+        'https://www.amazon.in/s?k=AERON+Velocity+Hair+Dryer',
+      flipkart:
+        'https://www.flipkart.com/search?q=AERON+Velocity+Hair+Dryer',
+      nykaa:
+        'https://www.nykaa.com/search/result/?q=AERON+Velocity+Hair+Dryer',
     },
   },
   {
     name: 'AERON Curl Definition Wand',
     slug: 'aeron-curl-definition-wand',
     sku: 'AP-CUR-001',
-    shortDescription: 'Create polished curls and waves with a salon-inspired styling wand.',
+    shortDescription:
+      'Create polished curls and waves with a salon-inspired styling wand.',
     description:
       'The AERON Curl Definition Wand gives you effortless control over your curls. The precision barrel heats evenly to create consistent waves and ringlets, while the comfortable, heat-resistant handle protects your hand during styling. Perfect for creating everything from loose beach waves to tight, defined curls.',
-    priceInPaise: 299900,          // ₹2,999
-    originalPriceInPaise: 399900,  // ₹3,999
+    priceInPaise: 299900,
+    originalPriceInPaise: 399900,
     status: 'ACTIVE' as const,
     isFeatured: true,
     isNew: false,
@@ -154,25 +204,35 @@ const PRODUCTS = [
     categorySlug: 'curling-tools',
     specs: [
       { label: 'Barrel', value: 'Precision Ceramic' },
-      { label: 'Handle', value: 'Heat-Resistant Comfort Grip' },
+      {
+        label: 'Handle',
+        value: 'Heat-Resistant Comfort Grip',
+      },
       { label: 'Cord', value: 'Swivel' },
-      { label: 'Note', value: 'Demo specifications — verify before launch' },
+      {
+        label: 'Note',
+        value: 'Demo specifications — verify before launch',
+      },
     ],
     buyLinks: {
-      amazon: 'https://www.amazon.in/s?k=AERON+Curl+Definition+Wand', // NOTE: replace with real URL
-      flipkart: 'https://www.flipkart.com/search?q=AERON+Curl+Definition+Wand', // NOTE: replace with real URL
-      nykaa: 'https://www.nykaa.com/search/result/?q=AERON+Curl+Definition+Wand', // NOTE: replace with real URL
+      amazon:
+        'https://www.amazon.in/s?k=AERON+Curl+Definition+Wand',
+      flipkart:
+        'https://www.flipkart.com/search?q=AERON+Curl+Definition+Wand',
+      nykaa:
+        'https://www.nykaa.com/search/result/?q=AERON+Curl+Definition+Wand',
     },
   },
   {
     name: 'AERON Volume Hot Air Brush',
     slug: 'aeron-volume-hot-air-brush',
     sku: 'AP-HAB-001',
-    shortDescription: 'Style, shape and create beautiful volume with one versatile tool.',
+    shortDescription:
+      'Style, shape and create beautiful volume with one versatile tool.',
     description:
       'The AERON Volume Hot Air Brush is the ultimate multitasker for your styling routine. It dries, styles, and adds volume in a single step, reducing styling time significantly. The volumizing barrel lifts roots and smooths ends, while the multiple heat settings accommodate all hair types.',
-    priceInPaise: 379900,          // ₹3,799
-    originalPriceInPaise: 499900,  // ₹4,999
+    priceInPaise: 379900,
+    originalPriceInPaise: 499900,
     status: 'ACTIVE' as const,
     isFeatured: true,
     isNew: false,
@@ -184,23 +244,30 @@ const PRODUCTS = [
       { label: 'Barrel', value: 'Volumizing' },
       { label: 'Handle', value: 'Easy-Grip Design' },
       { label: 'Heat Control', value: 'Multi-Setting' },
-      { label: 'Note', value: 'Demo specifications — verify before launch' },
+      {
+        label: 'Note',
+        value: 'Demo specifications — verify before launch',
+      },
     ],
     buyLinks: {
-      amazon: 'https://www.amazon.in/s?k=AERON+Volume+Hot+Air+Brush', // NOTE: replace with real URL
-      flipkart: 'https://www.flipkart.com/search?q=AERON+Volume+Hot+Air+Brush', // NOTE: replace with real URL
-      nykaa: 'https://www.nykaa.com/search/result/?q=AERON+Volume+Hot+Air+Brush', // NOTE: replace with real URL
+      amazon:
+        'https://www.amazon.in/s?k=AERON+Volume+Hot+Air+Brush',
+      flipkart:
+        'https://www.flipkart.com/search?q=AERON+Volume+Hot+Air+Brush',
+      nykaa:
+        'https://www.nykaa.com/search/result/?q=AERON+Volume+Hot+Air+Brush',
     },
   },
   {
     name: 'AERON Precision Trimmer',
     slug: 'aeron-precision-trimmer',
     sku: 'AP-TRM-001',
-    shortDescription: 'Clean lines and controlled grooming with a precision-focused design.',
+    shortDescription:
+      'Clean lines and controlled grooming with a precision-focused design.',
     description:
       'The AERON Precision Trimmer is engineered for clean, defined grooming. Its salon-inspired design and sharp precision cutting head make it ideal for edging, detailing, and maintaining sharp lines. Comfortable to hold during extended sessions with a grip designed for professional control.',
-    priceInPaise: 259900,          // ₹2,599
-    originalPriceInPaise: 349900,  // ₹3,499
+    priceInPaise: 259900,
+    originalPriceInPaise: 349900,
     status: 'ACTIVE' as const,
     isFeatured: false,
     isNew: true,
@@ -212,23 +279,30 @@ const PRODUCTS = [
       { label: 'Cutting Head', value: 'Precision' },
       { label: 'Handle', value: 'Comfort Grip' },
       { label: 'Design', value: 'Salon-Inspired' },
-      { label: 'Note', value: 'Demo specifications — verify before launch' },
+      {
+        label: 'Note',
+        value: 'Demo specifications — verify before launch',
+      },
     ],
     buyLinks: {
-      amazon: 'https://www.amazon.in/s?k=AERON+Precision+Trimmer', // NOTE: replace with real URL
-      flipkart: 'https://www.flipkart.com/search?q=AERON+Precision+Trimmer', // NOTE: replace with real URL
-      nykaa: 'https://www.nykaa.com/search/result/?q=AERON+Precision+Trimmer', // NOTE: replace with real URL
+      amazon:
+        'https://www.amazon.in/s?k=AERON+Precision+Trimmer',
+      flipkart:
+        'https://www.flipkart.com/search?q=AERON+Precision+Trimmer',
+      nykaa:
+        'https://www.nykaa.com/search/result/?q=AERON+Precision+Trimmer',
     },
   },
   {
     name: 'AERON Texture Crimper',
     slug: 'aeron-texture-crimper',
     sku: 'AP-CRM-001',
-    shortDescription: 'Add striking texture and dimension to your signature looks.',
+    shortDescription:
+      'Add striking texture and dimension to your signature looks.',
     description:
       'The AERON Texture Crimper delivers bold, dimensional results with its precisely spaced crimping plates. Fast to heat and easy to use, it creates striking textured looks that last. The ergonomic handle provides confident control, while the heat-ready plates ensure consistent performance from root to tip.',
-    priceInPaise: 329900,          // ₹3,299
-    originalPriceInPaise: 449900,  // ₹4,499
+    priceInPaise: 329900,
+    originalPriceInPaise: 449900,
     status: 'ACTIVE' as const,
     isFeatured: false,
     isNew: true,
@@ -240,23 +314,30 @@ const PRODUCTS = [
       { label: 'Plates', value: 'Textured Styling' },
       { label: 'Heat', value: 'Heat-Ready Design' },
       { label: 'Handle', value: 'Ergonomic' },
-      { label: 'Note', value: 'Demo specifications — verify before launch' },
+      {
+        label: 'Note',
+        value: 'Demo specifications — verify before launch',
+      },
     ],
     buyLinks: {
-      amazon: 'https://www.amazon.in/s?k=AERON+Texture+Crimper', // NOTE: replace with real URL
-      flipkart: 'https://www.flipkart.com/search?q=AERON+Texture+Crimper', // NOTE: replace with real URL
-      nykaa: 'https://www.nykaa.com/search/result/?q=AERON+Texture+Crimper', // NOTE: replace with real URL
+      amazon:
+        'https://www.amazon.in/s?k=AERON+Texture+Crimper',
+      flipkart:
+        'https://www.flipkart.com/search?q=AERON+Texture+Crimper',
+      nykaa:
+        'https://www.nykaa.com/search/result/?q=AERON+Texture+Crimper',
     },
   },
   {
     name: 'AERON Salon Paddle Brush',
     slug: 'aeron-salon-paddle-brush',
     sku: 'AP-BRU-001',
-    shortDescription: 'An everyday professional-inspired brush for smooth, comfortable styling.',
+    shortDescription:
+      'An everyday professional-inspired brush for smooth, comfortable styling.',
     description:
       'The AERON Salon Paddle Brush is a daily essential for smooth, polished hair. Its wide paddle surface detangles and smooths with ease, while the flexible bristle design is gentle on all hair types. The comfort-grip handle reduces fatigue during blowouts and everyday styling sessions.',
-    priceInPaise: 89900,           // ₹899
-    originalPriceInPaise: 129900,  // ₹1,299
+    priceInPaise: 89900,
+    originalPriceInPaise: 129900,
     status: 'ACTIVE' as const,
     isFeatured: false,
     isNew: true,
@@ -268,23 +349,30 @@ const PRODUCTS = [
       { label: 'Handle', value: 'Comfort-Grip' },
       { label: 'Bristles', value: 'Flexible Design' },
       { label: 'Use', value: 'Daily Salon Use' },
-      { label: 'Note', value: 'Demo specifications — verify before launch' },
+      {
+        label: 'Note',
+        value: 'Demo specifications — verify before launch',
+      },
     ],
     buyLinks: {
-      amazon: 'https://www.amazon.in/s?k=AERON+Salon+Paddle+Brush', // NOTE: replace with real URL
-      flipkart: 'https://www.flipkart.com/search?q=AERON+Salon+Paddle+Brush', // NOTE: replace with real URL
-      nykaa: 'https://www.nykaa.com/search/result/?q=AERON+Salon+Paddle+Brush', // NOTE: replace with real URL
+      amazon:
+        'https://www.amazon.in/s?k=AERON+Salon+Paddle+Brush',
+      flipkart:
+        'https://www.flipkart.com/search?q=AERON+Salon+Paddle+Brush',
+      nykaa:
+        'https://www.nykaa.com/search/result/?q=AERON+Salon+Paddle+Brush',
     },
   },
   {
     name: 'AERON Stylist Tool Kit',
     slug: 'aeron-stylist-tool-kit',
     sku: 'AP-KIT-001',
-    shortDescription: 'Keep your styling station ready with essential salon accessories.',
+    shortDescription:
+      'Keep your styling station ready with essential salon accessories.',
     description:
       'The AERON Stylist Tool Kit contains everything you need to keep your styling station organized and professional. This carefully curated set of salon essentials is packed in a travel-friendly storage case, making it perfect for both salon professionals and on-the-go stylists.',
-    priceInPaise: 149900,          // ₹1,499
-    originalPriceInPaise: 219900,  // ₹2,199
+    priceInPaise: 149900,
+    originalPriceInPaise: 219900,
     status: 'ACTIVE' as const,
     isFeatured: false,
     isNew: true,
@@ -296,19 +384,26 @@ const PRODUCTS = [
       { label: 'Contents', value: 'Organized Accessory Kit' },
       { label: 'Storage', value: 'Travel-Friendly Case' },
       { label: 'Includes', value: 'Stylist Essentials' },
-      { label: 'Note', value: 'Demo specifications — verify before launch' },
+      {
+        label: 'Note',
+        value: 'Demo specifications — verify before launch',
+      },
     ],
     buyLinks: {
-      amazon: 'https://www.amazon.in/s?k=AERON+Stylist+Tool+Kit', // NOTE: replace with real URL
-      flipkart: 'https://www.flipkart.com/search?q=AERON+Stylist+Tool+Kit', // NOTE: replace with real URL
-      nykaa: 'https://www.nykaa.com/search/result/?q=AERON+Stylist+Tool+Kit', // NOTE: replace with real URL
+      amazon:
+        'https://www.amazon.in/s?k=AERON+Stylist+Tool+Kit',
+      flipkart:
+        'https://www.flipkart.com/search?q=AERON+Stylist+Tool+Kit',
+      nykaa:
+        'https://www.nykaa.com/search/result/?q=AERON+Stylist+Tool+Kit',
     },
   },
 ];
 
-// ---------------------------------------------------------------------------
-// Marketplaces
-// ---------------------------------------------------------------------------
+// ==========================================
+// MARKETPLACES
+// ==========================================
+
 const MARKETPLACES = [
   {
     name: 'Amazon',
@@ -366,56 +461,106 @@ const MARKETPLACES = [
   },
 ];
 
-// ---------------------------------------------------------------------------
-// Homepage banners (from promo.ts)
-// ---------------------------------------------------------------------------
+// ==========================================
+// HOMEPAGE BANNERS
+// ==========================================
+
 const HOMEPAGE_BANNERS = [
   {
     eyebrow: 'THE PROFESSIONAL EDIT',
     title: 'PROFESSIONAL STYLING. PERFECT RESULTS.',
-    description: 'Discover salon-quality styling tools engineered for precision, performance, and creativity.',
+    description:
+      'Discover salon-quality styling tools engineered for precision, performance, and creativity.',
     imageUrl: unsplashImage('photo-1522335789203-aabd1fc54bc9'),
     displayOrder: 1,
   },
   {
     eyebrow: 'TOOLS FOR THE ART OF STYLING',
     title: 'CREATE EVERY LOOK WITH CONFIDENCE.',
-    description: 'Discover the tools behind your next signature style.',
+    description:
+      'Discover the tools behind your next signature style.',
     imageUrl: unsplashImage('photo-1560066984-138dadb4c035'),
     displayOrder: 2,
   },
   {
     eyebrow: 'THE SALON COLLECTION',
     title: 'CRAFTED FOR YOUR CREATIVE EDGE.',
-    description: 'Elevate your styling station with professional-inspired essentials.',
+    description:
+      'Elevate your styling station with professional-inspired essentials.',
     imageUrl: unsplashImage('photo-1521590832167-7bcbfaa6381f'),
     displayOrder: 3,
   },
 ];
 
-// ---------------------------------------------------------------------------
-// Site settings
-// ---------------------------------------------------------------------------
+// ==========================================
+// SITE SETTINGS
+// ==========================================
+
 const SITE_SETTINGS = [
-  { key: 'brandName', value: 'AERON PROFESSIONAL' },
-  { key: 'instagramUrl', value: 'https://instagram.com/aeronproffessional' },
-  { key: 'instagramHandle', value: '@aeronproffessional' },
-  { key: 'whatsappNumber', value: '919819628073' },
-  { key: 'whatsappMessage', value: 'Hi AERON Professional, I have an inquiry.' },
-  { key: 'contactEmail', value: 'tkgroupsofindia@yahoo.co.in' },
-  { key: 'supportEmail', value: 'tkgroupsofindia@yahoo.co.in' },
-  { key: 'businessPhone', value: '+91 98196 28073' },
-  { key: 'announcementBarText', value: 'WELCOME TO AERON PROFESSIONAL ✦ ELEVATE YOUR EVERYDAY STYLE' },
-  { key: 'announcementBarVisible', value: 'true' },
-  { key: 'seoTitle', value: 'AERON PROFESSIONAL | Salon-Grade Styling Tools' },
-  { key: 'seoDescription', value: 'Discover premium professional hair dryers, straighteners, curling tools and salon essentials.' },
-  { key: 'priceDisclaimer', value: 'Prices and availability may vary by retailer.' },
-  { key: 'copyrightText', value: 'AERON PROFESSIONAL. All rights reserved.' },
+  {
+    key: 'brandName',
+    value: 'AERON PROFESSIONAL',
+  },
+  {
+    key: 'instagramUrl',
+    value: 'https://instagram.com/aeronproffessional',
+  },
+  {
+    key: 'instagramHandle',
+    value: '@aeronproffessional',
+  },
+  {
+    key: 'whatsappNumber',
+    value: '919819628073',
+  },
+  {
+    key: 'whatsappMessage',
+    value: 'Hi AERON Professional, I have an inquiry.',
+  },
+  {
+    key: 'contactEmail',
+    value: 'tkgroupsofindia@yahoo.co.in',
+  },
+  {
+    key: 'supportEmail',
+    value: 'tkgroupsofindia@yahoo.co.in',
+  },
+  {
+    key: 'businessPhone',
+    value: '+91 98196 28073',
+  },
+  {
+    key: 'announcementBarText',
+    value:
+      'WELCOME TO AERON PROFESSIONAL ✦ ELEVATE YOUR EVERYDAY STYLE',
+  },
+  {
+    key: 'announcementBarVisible',
+    value: 'true',
+  },
+  {
+    key: 'seoTitle',
+    value: 'AERON PROFESSIONAL | Salon-Grade Styling Tools',
+  },
+  {
+    key: 'seoDescription',
+    value:
+      'Discover premium professional hair dryers, straighteners, curling tools and salon essentials.',
+  },
+  {
+    key: 'priceDisclaimer',
+    value: 'Prices and availability may vary by retailer.',
+  },
+  {
+    key: 'copyrightText',
+    value: 'AERON PROFESSIONAL. All rights reserved.',
+  },
 ];
 
-// ---------------------------------------------------------------------------
-// FAQs (from SupportModal FAQ_LIST)
-// ---------------------------------------------------------------------------
+// ==========================================
+// FAQS
+// ==========================================
+
 const FAQS = [
   {
     question: 'Where can I buy authentic AERON tools?',
@@ -449,48 +594,81 @@ const FAQS = [
   },
 ];
 
-// ---------------------------------------------------------------------------
-// Main seed function
-// ---------------------------------------------------------------------------
+// ==========================================
+// MAIN SEED FUNCTION
+// ==========================================
+
 async function main() {
   console.log('🌱 Starting seed...');
 
-  // 1. Seed categories
+  // SEED CATEGORIES
+
   console.log('  → Seeding categories...');
+
   for (const cat of CATEGORIES) {
     await prisma.category.upsert({
-      where: { slug: cat.slug },
+      where: {
+        slug: cat.slug,
+      },
       update: cat,
       create: cat,
     });
   }
+
   console.log(`  ✓ ${CATEGORIES.length} categories seeded`);
 
-  // 2. Seed marketplaces
+  // SEED MARKETPLACES
+
   console.log('  → Seeding marketplaces...');
+
   for (const mp of MARKETPLACES) {
     await prisma.marketplace.upsert({
-      where: { slug: mp.slug },
+      where: {
+        slug: mp.slug,
+      },
       update: mp,
       create: mp,
     });
   }
+
   console.log(`  ✓ ${MARKETPLACES.length} marketplaces seeded`);
 
-  // 3. Seed products + specs + category links + marketplace links
-  console.log('  → Seeding products...');
-  for (const p of PRODUCTS) {
-    const { categorySlug, specs, buyLinks, ...productData } = p;
+  // SEED PRODUCTS
 
-    // Upsert product
+  console.log('  → Seeding products...');
+
+  for (const p of PRODUCTS) {
+    const {
+      categorySlug,
+      specs,
+      buyLinks,
+      ...productData
+    } = p;
+
     const product = await prisma.product.upsert({
-      where: { slug: productData.slug },
-      update: { ...productData, publishedAt: new Date() },
-      create: { ...productData, publishedAt: new Date() },
+      where: {
+        slug: productData.slug,
+      },
+
+      update: {
+        ...productData,
+        publishedAt: new Date(),
+      },
+
+      create: {
+        ...productData,
+        publishedAt: new Date(),
+      },
     });
 
-    // Upsert specs (delete+recreate for idempotency)
-    await prisma.productSpecification.deleteMany({ where: { productId: product.id } });
+    // PRODUCT SPECIFICATIONS
+
+    await prisma.productSpecification.deleteMany({
+      where: {
+        productId: product.id,
+      },
+    });
+
     for (let i = 0; i < specs.length; i++) {
       await prisma.productSpecification.create({
         data: {
@@ -502,10 +680,16 @@ async function main() {
       });
     }
 
-    // Upsert primary product image
-    const existingPrimary = await prisma.productImage.findFirst({
-      where: { productId: product.id, isPrimary: true },
-    });
+    // PRIMARY PRODUCT IMAGE
+
+    const existingPrimary =
+      await prisma.productImage.findFirst({
+        where: {
+          productId: product.id,
+          isPrimary: true,
+        },
+      });
+
     if (!existingPrimary && productData.primaryImageUrl) {
       await prisma.productImage.create({
         data: {
@@ -518,75 +702,169 @@ async function main() {
       });
     }
 
-    // Link category
-    const category = await prisma.category.findUnique({ where: { slug: categorySlug } });
+    // LINK CATEGORY
+
+    const category = await prisma.category.findUnique({
+      where: {
+        slug: categorySlug,
+      },
+    });
+
     if (category) {
       await prisma.productCategory.upsert({
-        where: { productId_categoryId: { productId: product.id, categoryId: category.id } },
+        where: {
+          productId_categoryId: {
+            productId: product.id,
+            categoryId: category.id,
+          },
+        },
+
         update: {},
-        create: { productId: product.id, categoryId: category.id },
+
+        create: {
+          productId: product.id,
+          categoryId: category.id,
+        },
       });
     }
 
-    // Link marketplaces
+    // LINK MARKETPLACES
+
     for (const [mpSlug, url] of Object.entries(buyLinks)) {
-      const marketplace = await prisma.marketplace.findUnique({ where: { slug: mpSlug } });
+      if (typeof url !== 'string' || !url) {
+        continue;
+      }
+
+      const marketplace =
+        await prisma.marketplace.findUnique({
+          where: {
+            slug: mpSlug,
+          },
+        });
+
       if (marketplace) {
         await prisma.productMarketplaceLink.upsert({
-          where: { productId_marketplaceId: { productId: product.id, marketplaceId: marketplace.id } },
-          update: { url, isActive: true },
-          create: { productId: product.id, marketplaceId: marketplace.id, url, isActive: true },
+          where: {
+            productId_marketplaceId: {
+              productId: product.id,
+              marketplaceId: marketplace.id,
+            },
+          },
+
+          update: {
+            url,
+            isActive: true,
+          },
+
+          create: {
+            productId: product.id,
+            marketplaceId: marketplace.id,
+            url,
+            isActive: true,
+          },
         });
       }
     }
   }
-  console.log(`  ✓ ${PRODUCTS.length} products seeded with specs, images, categories & marketplace links`);
 
-  // 4. Seed homepage banners
+  console.log(
+    `  ✓ ${PRODUCTS.length} products seeded with specs, images, categories & marketplace links`
+  );
+
+  // SEED HOMEPAGE BANNERS
+
   console.log('  → Seeding homepage banners...');
+
   for (const banner of HOMEPAGE_BANNERS) {
-    // Check by title+eyebrow combination for idempotency
-    const existing = await prisma.homepageBanner.findFirst({
-      where: { title: banner.title, eyebrow: banner.eyebrow },
-    });
+    const existing =
+      await prisma.homepageBanner.findFirst({
+        where: {
+          title: banner.title,
+          eyebrow: banner.eyebrow,
+        },
+      });
+
     if (existing) {
-      await prisma.homepageBanner.update({ where: { id: existing.id }, data: banner });
+      await prisma.homepageBanner.update({
+        where: {
+          id: existing.id,
+        },
+        data: banner,
+      });
     } else {
-      await prisma.homepageBanner.create({ data: banner });
+      await prisma.homepageBanner.create({
+        data: banner,
+      });
     }
   }
-  console.log(`  ✓ ${HOMEPAGE_BANNERS.length} homepage banners seeded`);
 
-  // 5. Seed site settings
+  console.log(
+    `  ✓ ${HOMEPAGE_BANNERS.length} homepage banners seeded`
+  );
+
+  // SEED SITE SETTINGS
+
   console.log('  → Seeding site settings...');
+
   for (const setting of SITE_SETTINGS) {
     await prisma.siteSetting.upsert({
-      where: { key: setting.key },
-      update: { value: setting.value },
-      create: { key: setting.key, value: setting.value },
+      where: {
+        key: setting.key,
+      },
+
+      update: {
+        value: setting.value,
+      },
+
+      create: {
+        key: setting.key,
+        value: setting.value,
+      },
     });
   }
-  console.log(`  ✓ ${SITE_SETTINGS.length} site settings seeded`);
 
-  // 6. Seed FAQs
+  console.log(
+    `  ✓ ${SITE_SETTINGS.length} site settings seeded`
+  );
+
+  // SEED FAQS
+
   console.log('  → Seeding FAQs...');
+
   for (const faq of FAQS) {
-    const existing = await prisma.fAQ.findFirst({ where: { question: faq.question } });
+    const existing = await prisma.fAQ.findFirst({
+      where: {
+        question: faq.question,
+      },
+    });
+
     if (existing) {
-      await prisma.fAQ.update({ where: { id: existing.id }, data: faq });
+      await prisma.fAQ.update({
+        where: {
+          id: existing.id,
+        },
+        data: faq,
+      });
     } else {
-      await prisma.fAQ.create({ data: faq });
+      await prisma.fAQ.create({
+        data: faq,
+      });
     }
   }
+
   console.log(`  ✓ ${FAQS.length} FAQs seeded`);
 
   console.log('\n✅ Seed complete!');
 }
 
+// ==========================================
+// EXECUTE SEED AND CLOSE CONNECTION
+// ==========================================
+
 main()
-  .catch((e) => {
-    console.error('❌ Seed failed:', e);
-    process.exit(1);
+  .catch((error: unknown) => {
+    console.error('❌ Seed failed:', error);
+    process.exitCode = 1;
   })
   .finally(async () => {
     await prisma.$disconnect();
