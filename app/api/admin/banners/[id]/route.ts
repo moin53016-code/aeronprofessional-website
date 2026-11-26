@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { z } from 'zod';
 
 import { PERMISSIONS } from '@/lib/permissions';
+import { normalizeImageUrl } from '@/lib/image-url';
 
 import {
   adminDenied,
@@ -47,39 +48,49 @@ const displayOrderSchema = z
   .min(-2147483648)
   .max(2147483647);
 
-// IMAGE URL VALIDATION
+// SMART IMAGE URL VALIDATION
 
 const imageUrlSchema = z
   .string()
   .trim()
+  .min(1, 'Banner image is required.')
   .max(2048)
-  .refine(
-    (value) => {
+  .transform((value, ctx) => {
+    const normalized = normalizeImageUrl(value);
+
+    if (!normalized || normalized.length > 2048) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          'Upload an image or enter a valid HTTPS image URL.',
+      });
+
+      return z.NEVER;
+    }
+
+    // REJECT IMGBB SHARING PAGES
+
+    if (normalized.startsWith('https://')) {
+      const url = new URL(normalized);
+
       if (
-        /^\/(?:uploads|images)\/[a-zA-Z0-9._-]+$/.test(value)
+        url.hostname === 'ibb.co' ||
+        url.hostname === 'www.ibb.co' ||
+        url.hostname === 'imgbb.com' ||
+        url.hostname === 'www.imgbb.com'
       ) {
-        return true;
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'Please use the direct image address starting with https://i.ibb.co/ instead of the ImgBB sharing page.',
+        });
+
+        return z.NEVER;
       }
+    }
 
-      try {
-        const url = new URL(value);
-
-        return (
-          (
-            url.protocol === 'https:' ||
-            url.protocol === 'http:'
-          ) &&
-          Boolean(url.hostname) &&
-          !url.username &&
-          !url.password
-        );
-
-      } catch {
-        return false;
-      }
-    },
-    'Enter a valid image URL or local image path.'
-  );
+    return normalized;
+  });
 
 // DATE VALIDATION
 
@@ -95,7 +106,6 @@ const dateSchema = z
 // BANNER UPDATE VALIDATION
 
 const updateBannerSchema = z.object({
-
   eyebrow: z
     .string()
     .trim()
@@ -117,12 +127,9 @@ const updateBannerSchema = z.object({
     .max(5000)
     .optional(),
 
-  imageUrl: imageUrlSchema.optional(),
+  // SINGLE RESPONSIVE BANNER IMAGE
 
-  mobileImageUrl: imageUrlSchema
-    .or(z.literal(''))
-    .nullable()
-    .optional(),
+  imageUrl: imageUrlSchema.optional(),
 
   buttonLabel: z
     .string()
@@ -154,7 +161,6 @@ const updateBannerSchema = z.object({
 // BANNER STATUS VALIDATION
 
 const patchBannerSchema = z.object({
-
   isActive:
     z.boolean().optional(),
 
@@ -185,7 +191,6 @@ export async function GET(
   { params }: Context
 ) {
   try {
-
     const denied = await adminDenied({
       request,
       permission: PERMISSIONS.BANNER_VIEW,
@@ -201,9 +206,10 @@ export async function GET(
       return badInput('Invalid banner identifier.');
     }
 
-    const banner = await prisma.homepageBanner.findUnique({
-      where: { id },
-    });
+    const banner =
+      await prisma.homepageBanner.findUnique({
+        where: { id },
+      });
 
     if (!banner) {
       return bannerNotFound();
@@ -221,14 +227,13 @@ export async function GET(
   }
 }
 
-// UPDATE BANNER
+// UPDATE HOMEPAGE BANNER
 
 export async function PUT(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-
     // VERIFY ADMIN PERMISSION
 
     const authorization = await authorizeAdmin({
@@ -247,7 +252,7 @@ export async function PUT(
       return badInput('Invalid banner identifier.');
     }
 
-    // CENTRALIZED REQUEST BODY PROTECTION
+    // SECURE REQUEST BODY VALIDATION
 
     const body = await readJsonBody(
       request,
@@ -263,9 +268,15 @@ export async function PUT(
     );
 
     if (!parsed.success) {
+      const details = z.flattenError(parsed.error);
+
+      const fieldErrors = Object.values(
+        details.fieldErrors
+      ).flat();
+
       return badInput(
-        'Invalid banner data.',
-        z.flattenError(parsed.error)
+        fieldErrors[0] || 'Invalid banner data.',
+        details
       );
     }
 
@@ -278,13 +289,12 @@ export async function PUT(
     const {
       startsAt,
       endsAt,
-      mobileImageUrl,
       buttonLabel,
       buttonTarget,
       ...data
     } = parsed.data;
 
-    // ATOMIC BANNER UPDATE AND AUDIT LOGGING
+    // ATOMIC UPDATE AND AUDIT LOGGING
 
     const result = await prisma.$transaction(
       async (tx) => {
@@ -300,7 +310,7 @@ export async function PUT(
           };
         }
 
-        // PRESERVE EXISTING SCHEDULE
+        // PRESERVE EXISTING BANNER SCHEDULE
 
         const startDate =
           startsAt === undefined
@@ -316,7 +326,7 @@ export async function PUT(
               ? new Date(endsAt)
               : null;
 
-        // VALIDATE EFFECTIVE DATE RANGE
+        // VALIDATE BANNER DATE RANGE
 
         if (
           startDate &&
@@ -330,46 +340,42 @@ export async function PUT(
 
         // UPDATE BANNER
 
-        const banner = await tx.homepageBanner.update({
-          where: { id },
+        const banner =
+          await tx.homepageBanner.update({
+            where: { id },
 
-          data: {
-            ...data,
+            data: {
+              ...data,
 
-            ...(mobileImageUrl !== undefined
-              ? {
-                  mobileImageUrl:
-                    mobileImageUrl || null,
-                }
-              : {}),
+              // PRESERVE UNUSED LEGACY MOBILE IMAGE FIELD
 
-            ...(buttonLabel !== undefined
-              ? {
-                  buttonLabel:
-                    buttonLabel || 'SHOP NOW',
-                }
-              : {}),
+              ...(buttonLabel !== undefined
+                ? {
+                    buttonLabel:
+                      buttonLabel || 'SHOP NOW',
+                  }
+                : {}),
 
-            ...(buttonTarget !== undefined
-              ? {
-                  buttonTarget:
-                    buttonTarget || 'Shop All',
-                }
-              : {}),
+              ...(buttonTarget !== undefined
+                ? {
+                    buttonTarget:
+                      buttonTarget || 'Shop All',
+                  }
+                : {}),
 
-            ...(startsAt !== undefined
-              ? {
-                  startsAt: startDate,
-                }
-              : {}),
+              ...(startsAt !== undefined
+                ? {
+                    startsAt: startDate,
+                  }
+                : {}),
 
-            ...(endsAt !== undefined
-              ? {
-                  endsAt: endDate,
-                }
-              : {}),
-          },
-        });
+              ...(endsAt !== undefined
+                ? {
+                    endsAt: endDate,
+                  }
+                : {}),
+            },
+          });
 
         // RECORD BANNER UPDATE
 
@@ -421,6 +427,8 @@ export async function PUT(
       );
     }
 
+    // REFRESH WEBSITE AND ADMIN PANEL
+
     refreshAdmin('/admin/banners');
 
     return secureAdminResponse(
@@ -445,7 +453,6 @@ export async function PATCH(
   { params }: Context
 ) {
   try {
-
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.BANNER_MANAGE,
@@ -490,7 +497,7 @@ export async function PATCH(
       );
     }
 
-    // ATOMIC STATUS UPDATE AND AUDIT LOGGING
+    // ATOMIC STATUS UPDATE
 
     const banner = await prisma.$transaction(
       async (tx) => {
@@ -586,7 +593,6 @@ export async function DELETE(
   { params }: Context
 ) {
   try {
-
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.BANNER_MANAGE,
@@ -603,7 +609,7 @@ export async function DELETE(
       return badInput('Invalid banner identifier.');
     }
 
-    // ATOMIC BANNER DELETION AND AUDIT LOGGING
+    // ATOMIC DELETION AND AUDIT LOGGING
 
     await prisma.$transaction(async (tx) => {
 
@@ -622,7 +628,6 @@ export async function DELETE(
         },
         tx
       );
-
     });
 
     refreshAdmin('/admin/banners');

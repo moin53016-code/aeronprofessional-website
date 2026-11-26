@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { prisma } from '@/lib/db';
 import { PERMISSIONS } from '@/lib/permissions';
+import { normalizeImageUrl } from '@/lib/image-url';
 
 import {
   adminDenied,
@@ -40,43 +41,55 @@ const idSchema = z
   .max(128)
   .regex(/^[a-zA-Z0-9_-]+$/);
 
-// CATEGORY IMAGE URL VALIDATION
+// SMART CATEGORY IMAGE URL VALIDATION
 
 const imageUrlSchema = z
   .string()
   .trim()
   .max(2048)
-  .refine(
-    (value) => {
-      if (value === '') {
-        return true;
-      }
+  .transform((value, ctx) => {
+
+    // CATEGORY IMAGE IS OPTIONAL
+
+    if (value === '') {
+      return null;
+    }
+
+    const normalized = normalizeImageUrl(value);
+
+    if (!normalized || normalized.length > 2048) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          'Upload an image or enter a valid HTTPS image URL.',
+      });
+
+      return z.NEVER;
+    }
+
+    // REJECT IMGBB SHARING PAGES
+
+    if (normalized.startsWith('https://')) {
+      const url = new URL(normalized);
 
       if (
-        /^\/(?:uploads|images)\/[a-zA-Z0-9._-]+$/.test(value)
+        url.hostname === 'ibb.co' ||
+        url.hostname === 'www.ibb.co' ||
+        url.hostname === 'imgbb.com' ||
+        url.hostname === 'www.imgbb.com'
       ) {
-        return true;
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'Please use the direct image address starting with https://i.ibb.co/ instead of the ImgBB sharing page.',
+        });
+
+        return z.NEVER;
       }
+    }
 
-      try {
-        const url = new URL(value);
-
-        return (
-          (
-            url.protocol === 'https:' ||
-            url.protocol === 'http:'
-          ) &&
-          Boolean(url.hostname) &&
-          !url.username &&
-          !url.password
-        );
-
-      } catch {
-        return false;
-      }
-    },
-    'Enter a valid image URL or local image path.'
-  );
+    return normalized;
+  });
 
 // CATEGORY UPDATE VALIDATION
 
@@ -114,6 +127,8 @@ const updateCategorySchema = z.object({
     .nullable()
     .optional(),
 
+  // SMART CATEGORY IMAGE
+
   imageUrl: imageUrlSchema
     .nullable()
     .optional(),
@@ -137,9 +152,12 @@ const updateCategorySchema = z.object({
 // CATEGORY STATUS VALIDATION
 
 const categoryStatusSchema = z.object({
-  isVisible: z.boolean().optional(),
 
-  isPublished: z.boolean().optional(),
+  isVisible:
+    z.boolean().optional(),
+
+  isPublished:
+    z.boolean().optional(),
 });
 
 // CATEGORY NOT FOUND RESPONSE
@@ -149,6 +167,7 @@ function categoryNotFound() {
     NextResponse.json(
       {
         success: false,
+
         error: 'Category not found.',
       },
       {
@@ -161,13 +180,18 @@ function categoryNotFound() {
 // REFRESH CATEGORY AND PRODUCT DATA
 
 function refreshCategories() {
+
   refreshAdmin('/admin/categories');
+
   revalidatePath('/admin/products');
 }
 
 // CENTRALIZED CATEGORY ERROR HANDLING
 
 function handleCategoryError(error: unknown) {
+
+  // DUPLICATE CATEGORY NAME OR SLUG
+
   if (
     typeof error === 'object' &&
     error !== null &&
@@ -178,7 +202,9 @@ function handleCategoryError(error: unknown) {
       NextResponse.json(
         {
           success: false,
-          error: 'Category name or slug already exists.',
+
+          error:
+            'Category name or slug already exists.',
         },
         {
           status: 409,
@@ -198,8 +224,11 @@ export async function GET(
 ) {
   try {
 
+    // VERIFY ADMIN PERMISSION
+
     const denied = await adminDenied({
       request,
+
       permission: PERMISSIONS.CATEGORY_VIEW,
     });
 
@@ -210,20 +239,25 @@ export async function GET(
     const { id } = await params;
 
     if (!idSchema.safeParse(id).success) {
-      return badInput('Invalid category identifier.');
+      return badInput(
+        'Invalid category identifier.'
+      );
     }
 
-    const category = await prisma.category.findUnique({
-      where: { id },
+    // LOAD CATEGORY AND RELATED PRODUCTS
 
-      include: {
-        productCategories: {
-          include: {
-            product: true,
+    const category =
+      await prisma.category.findUnique({
+        where: { id },
+
+        include: {
+          productCategories: {
+            include: {
+              product: true,
+            },
           },
         },
-      },
-    });
+      });
 
     if (!category) {
       return categoryNotFound();
@@ -232,6 +266,7 @@ export async function GET(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         category,
       })
     );
@@ -250,8 +285,11 @@ export async function PUT(
 ) {
   try {
 
+    // VERIFY ADMIN PERMISSION
+
     const authorization = await authorizeAdmin({
       request,
+
       permission: PERMISSIONS.CATEGORY_MANAGE,
     });
 
@@ -260,13 +298,16 @@ export async function PUT(
     }
 
     const admin = authorization.user;
+
     const { id } = await params;
 
     if (!idSchema.safeParse(id).success) {
-      return badInput('Invalid category identifier.');
+      return badInput(
+        'Invalid category identifier.'
+      );
     }
 
-    // REQUEST BODY PROTECTION
+    // SECURE REQUEST BODY VALIDATION
 
     const body = await readJsonBody(
       request,
@@ -277,14 +318,26 @@ export async function PUT(
       return body.response;
     }
 
+    // VALIDATE CATEGORY AND IMAGE URL
+
     const parsed = updateCategorySchema.safeParse(
       body.data
     );
 
     if (!parsed.success) {
+
+      const details = z.flattenError(
+        parsed.error
+      );
+
+      const fieldErrors = Object.values(
+        details.fieldErrors
+      ).flat();
+
       return badInput(
-        'Invalid category data.',
-        z.flattenError(parsed.error)
+        fieldErrors[0] || 'Invalid category data.',
+
+        details
       );
     }
 
@@ -301,33 +354,40 @@ export async function PUT(
     const category = await prisma.$transaction(
       async (tx) => {
 
-        const existing = await tx.category.findUnique({
-          where: { id },
+        const existing =
+          await tx.category.findUnique({
+            where: { id },
 
-          select: {
-            isVisible: true,
-            isPublished: true,
-          },
-        });
+            select: {
+              isVisible: true,
+
+              isPublished: true,
+            },
+          });
 
         if (!existing) {
           return null;
         }
 
-        const updatedCategory = await tx.category.update({
-          where: { id },
+        // UPDATE CATEGORY WITH NORMALIZED IMAGE URL
 
-          data: parsed.data,
-        });
+        const updatedCategory =
+          await tx.category.update({
+            where: { id },
+
+            data: parsed.data,
+          });
 
         // RECORD CATEGORY UPDATE
 
         await recordAdminAction(
           admin,
           {
-            action: AUDIT_ACTIONS.CATEGORY_UPDATED,
+            action:
+              AUDIT_ACTIONS.CATEGORY_UPDATED,
 
-            entityType: AUDIT_ENTITIES.CATEGORY,
+            entityType:
+              AUDIT_ENTITIES.CATEGORY,
 
             entityId: id,
           },
@@ -337,8 +397,11 @@ export async function PUT(
         // RECORD VISIBILITY OR PUBLICATION CHANGE
 
         if (
-          existing.isVisible !== updatedCategory.isVisible ||
-          existing.isPublished !== updatedCategory.isPublished
+          existing.isVisible !==
+            updatedCategory.isVisible ||
+
+          existing.isPublished !==
+            updatedCategory.isPublished
         ) {
           await recordAdminAction(
             admin,
@@ -346,7 +409,8 @@ export async function PUT(
               action:
                 AUDIT_ACTIONS.CATEGORY_VISIBILITY_CHANGED,
 
-              entityType: AUDIT_ENTITIES.CATEGORY,
+              entityType:
+                AUDIT_ENTITIES.CATEGORY,
 
               entityId: id,
             },
@@ -362,13 +426,18 @@ export async function PUT(
       return categoryNotFound();
     }
 
+    // REFRESH WEBSITE AND ADMIN PANEL
+
     refreshCategories();
 
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         category,
-        message: 'Category updated successfully.',
+
+        message:
+          'Category updated successfully.',
       })
     );
 
@@ -388,6 +457,7 @@ export async function PATCH(
 
     const authorization = await authorizeAdmin({
       request,
+
       permission: PERMISSIONS.CATEGORY_MANAGE,
     });
 
@@ -396,10 +466,13 @@ export async function PATCH(
     }
 
     const admin = authorization.user;
+
     const { id } = await params;
 
     if (!idSchema.safeParse(id).success) {
-      return badInput('Invalid category identifier.');
+      return badInput(
+        'Invalid category identifier.'
+      );
     }
 
     // MAXIMUM STATUS REQUEST SIZE: 4 KB
@@ -431,30 +504,36 @@ export async function PATCH(
     const category = await prisma.$transaction(
       async (tx) => {
 
-        const existing = await tx.category.findUnique({
-          where: { id },
+        const existing =
+          await tx.category.findUnique({
+            where: { id },
 
-          select: {
-            isVisible: true,
-            isPublished: true,
-          },
-        });
+            select: {
+              isVisible: true,
+
+              isPublished: true,
+            },
+          });
 
         if (!existing) {
           return null;
         }
 
-        const updatedCategory = await tx.category.update({
-          where: { id },
+        const updatedCategory =
+          await tx.category.update({
+            where: { id },
 
-          data: parsed.data,
-        });
+            data: parsed.data,
+          });
 
         // RECORD ACTUAL STATUS CHANGE
 
         if (
-          existing.isVisible !== updatedCategory.isVisible ||
-          existing.isPublished !== updatedCategory.isPublished
+          existing.isVisible !==
+            updatedCategory.isVisible ||
+
+          existing.isPublished !==
+            updatedCategory.isPublished
         ) {
           await recordAdminAction(
             admin,
@@ -462,7 +541,8 @@ export async function PATCH(
               action:
                 AUDIT_ACTIONS.CATEGORY_VISIBILITY_CHANGED,
 
-              entityType: AUDIT_ENTITIES.CATEGORY,
+              entityType:
+                AUDIT_ENTITIES.CATEGORY,
 
               entityId: id,
             },
@@ -483,8 +563,11 @@ export async function PATCH(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         category,
-        message: 'Category status updated.',
+
+        message:
+          'Category status updated.',
       })
     );
 
@@ -502,8 +585,11 @@ export async function DELETE(
 ) {
   try {
 
+    // VERIFY ADMIN PERMISSION
+
     const authorization = await authorizeAdmin({
       request,
+
       permission: PERMISSIONS.CATEGORY_MANAGE,
     });
 
@@ -512,10 +598,13 @@ export async function DELETE(
     }
 
     const admin = authorization.user;
+
     const { id } = await params;
 
     if (!idSchema.safeParse(id).success) {
-      return badInput('Invalid category identifier.');
+      return badInput(
+        'Invalid category identifier.'
+      );
     }
 
     // ATOMIC CATEGORY DELETION AND AUDIT LOGGING
@@ -523,13 +612,14 @@ export async function DELETE(
     const deleted = await prisma.$transaction(
       async (tx) => {
 
-        const category = await tx.category.findUnique({
-          where: { id },
+        const category =
+          await tx.category.findUnique({
+            where: { id },
 
-          select: {
-            name: true,
-          },
-        });
+            select: {
+              name: true,
+            },
+          });
 
         if (!category) {
           return null;
@@ -556,9 +646,11 @@ export async function DELETE(
         await recordAdminAction(
           admin,
           {
-            action: AUDIT_ACTIONS.CATEGORY_DELETED,
+            action:
+              AUDIT_ACTIONS.CATEGORY_DELETED,
 
-            entityType: AUDIT_ENTITIES.CATEGORY,
+            entityType:
+              AUDIT_ENTITIES.CATEGORY,
 
             entityId: id,
           },
@@ -568,7 +660,8 @@ export async function DELETE(
         return {
           name: category.name,
 
-          affectedProducts: removedAssignments.count,
+          affectedProducts:
+            removedAssignments.count,
         };
       }
     );
@@ -577,15 +670,23 @@ export async function DELETE(
       return categoryNotFound();
     }
 
+    // REFRESH WEBSITE AND ADMIN PANEL
+
     refreshCategories();
 
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         deleted: true,
+
         deletedProductCount: 0,
+
         categoryName: deleted.name,
-        affectedProducts: deleted.affectedProducts,
+
+        affectedProducts:
+          deleted.affectedProducts,
+
         message:
           'Category permanently deleted. Products preserved.',
       })

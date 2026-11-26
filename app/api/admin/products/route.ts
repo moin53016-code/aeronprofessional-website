@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db';
 import { z } from 'zod';
 
 import { PERMISSIONS } from '@/lib/permissions';
+import { normalizeImageUrl } from '@/lib/image-url';
 
 import {
   adminDenied,
@@ -32,7 +33,7 @@ export const revalidate = 0;
 
 const MAX_INT = 2147483647;
 
-// URL VALIDATION
+// GENERAL WEBSITE URL VALIDATION
 
 function isValidWebUrl(value: string): boolean {
   try {
@@ -53,24 +54,49 @@ function isValidWebUrl(value: string): boolean {
   }
 }
 
-// IMAGE URL VALIDATION
+// SMART IMAGE URL VALIDATION
 
 const imageUrlSchema = z
   .string()
   .trim()
+  .min(1, 'Image URL cannot be empty.')
   .max(2048)
-  .refine(
-    (value) => {
-      if (
-        /^\/(?:uploads|images)\/[a-zA-Z0-9._-]+$/.test(value)
-      ) {
-        return true;
-      }
+  .transform((value, ctx) => {
+    const normalized = normalizeImageUrl(value);
 
-      return isValidWebUrl(value);
-    },
-    'Use a valid HTTP(S) image URL or local image path.'
-  );
+    if (!normalized || normalized.length > 2048) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          'Upload an image or enter a valid HTTPS image URL.',
+      });
+
+      return z.NEVER;
+    }
+
+    // REJECT IMGBB SHARING PAGES
+
+    if (normalized.startsWith('https://')) {
+      const url = new URL(normalized);
+
+      if (
+        url.hostname === 'ibb.co' ||
+        url.hostname === 'www.ibb.co' ||
+        url.hostname === 'imgbb.com' ||
+        url.hostname === 'www.imgbb.com'
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'Please use the direct image address starting with https://i.ibb.co/ instead of the ImgBB sharing page.',
+        });
+
+        return z.NEVER;
+      }
+    }
+
+    return normalized;
+  });
 
 // MARKETPLACE URL VALIDATION
 
@@ -175,6 +201,8 @@ const createProductSchema = z.object({
     .nullable()
     .optional(),
 
+  // SMART PRIMARY IMAGE URL
+
   primaryImageUrl: imageUrlSchema
     .nullable()
     .optional(),
@@ -205,6 +233,8 @@ const createProductSchema = z.object({
     )
     .max(100)
     .default([]),
+
+  // SMART PRODUCT IMAGE URLS
 
   images: z
     .array(
@@ -340,7 +370,8 @@ export async function GET(request: NextRequest) {
     // CATEGORY FILTER
 
     if (categoryId) {
-      const parsedId = idSchema.safeParse(categoryId);
+      const parsedId =
+        idSchema.safeParse(categoryId);
 
       if (!parsedId.success) {
         return badInput('Invalid category identifier.');
@@ -383,6 +414,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+
+    // VERIFY ADMIN PERMISSION
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.PRODUCT_CREATE,
@@ -394,7 +428,7 @@ export async function POST(request: NextRequest) {
 
     const admin = authorization.user;
 
-    // CENTRALIZED REQUEST BODY PROTECTION
+    // SECURE REQUEST BODY VALIDATION
 
     const body = await readJsonBody(
       request,
@@ -412,9 +446,15 @@ export async function POST(request: NextRequest) {
     );
 
     if (!parsed.success) {
+      const details = z.flattenError(parsed.error);
+
+      const fieldErrors = Object.values(
+        details.fieldErrors
+      ).flat();
+
       return badInput(
-        'Invalid product data.',
-        z.flattenError(parsed.error)
+        fieldErrors[0] || 'Invalid product data.',
+        details
       );
     }
 
@@ -460,54 +500,71 @@ export async function POST(request: NextRequest) {
     const product = await prisma.$transaction(
       async (tx) => {
 
-        const createdProduct = await tx.product.create({
-          data: {
-            ...productData,
+        const createdProduct =
+          await tx.product.create({
+            data: {
+              ...productData,
 
-            publishedAt:
-              productData.status === 'ACTIVE'
-                ? new Date()
-                : null,
+              publishedAt:
+                productData.status === 'ACTIVE'
+                  ? new Date()
+                  : null,
 
-            images: {
-              create: images.map((image) => ({
-                url: image.url,
-                altText: image.altText,
-                displayOrder: image.displayOrder,
-                isPrimary: image.isPrimary,
-              })),
+              // SAVE NORMALIZED PRODUCT IMAGES
+
+              images: {
+                create: images.map((image) => ({
+                  url: image.url,
+
+                  altText: image.altText,
+
+                  displayOrder: image.displayOrder,
+
+                  isPrimary: image.isPrimary,
+                })),
+              },
+
+              // PRODUCT SPECIFICATIONS
+
+              specifications: {
+                create: specifications.map((spec) => ({
+                  label: spec.label,
+
+                  value: spec.value,
+
+                  displayOrder: spec.displayOrder,
+                })),
+              },
+
+              // PRODUCT CATEGORY ASSIGNMENTS
+
+              categories: {
+                create: uniqueCategoryIds.map(
+                  (categoryId) => ({
+                    categoryId,
+                  })
+                ),
+              },
+
+              // PRODUCT MARKETPLACE LINKS
+
+              marketplaceLinks: {
+                create: uniqueMarketplaceLinks.map(
+                  (link) => ({
+                    marketplaceId: link.marketplaceId,
+
+                    url: link.url,
+
+                    isActive: link.isActive,
+
+                    displayOrder: link.displayOrder,
+                  })
+                ),
+              },
             },
 
-            specifications: {
-              create: specifications.map((spec) => ({
-                label: spec.label,
-                value: spec.value,
-                displayOrder: spec.displayOrder,
-              })),
-            },
-
-            categories: {
-              create: uniqueCategoryIds.map(
-                (categoryId) => ({
-                  categoryId,
-                })
-              ),
-            },
-
-            marketplaceLinks: {
-              create: uniqueMarketplaceLinks.map(
-                (link) => ({
-                  marketplaceId: link.marketplaceId,
-                  url: link.url,
-                  isActive: link.isActive,
-                  displayOrder: link.displayOrder,
-                })
-              ),
-            },
-          },
-
-          include: productInclude,
-        });
+            include: productInclude,
+          });
 
         // RECORD VERIFIED ADMIN ACTIVITY
 
@@ -515,7 +572,9 @@ export async function POST(request: NextRequest) {
           admin,
           {
             action: AUDIT_ACTIONS.PRODUCT_CREATED,
+
             entityType: AUDIT_ENTITIES.PRODUCT,
+
             entityId: createdProduct.id,
           },
           tx
@@ -525,13 +584,17 @@ export async function POST(request: NextRequest) {
       }
     );
 
+    // REFRESH WEBSITE AND ADMIN PANEL
+
     refreshAdmin('/admin/products');
 
     return secureAdminResponse(
       NextResponse.json(
         {
           success: true,
+
           product,
+
           message: 'Product created successfully.',
         },
         {

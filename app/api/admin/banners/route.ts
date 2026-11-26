@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { z } from 'zod';
 
 import { PERMISSIONS } from '@/lib/permissions';
+import { normalizeImageUrl } from '@/lib/image-url';
 
 import {
   adminDenied,
@@ -27,39 +28,49 @@ import {
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-// IMAGE URL VALIDATION
+// SMART IMAGE URL VALIDATION
 
 const imageUrlSchema = z
   .string()
   .trim()
+  .min(1, 'Banner image is required.')
   .max(2048)
-  .refine(
-    (value) => {
+  .transform((value, ctx) => {
+    const normalized = normalizeImageUrl(value);
+
+    if (!normalized || normalized.length > 2048) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          'Upload an image or enter a valid HTTPS image URL.',
+      });
+
+      return z.NEVER;
+    }
+
+    // REJECT IMGBB SHARING PAGES
+
+    if (normalized.startsWith('https://')) {
+      const url = new URL(normalized);
+
       if (
-        /^\/(?:uploads|images)\/[a-zA-Z0-9._-]+$/.test(value)
+        url.hostname === 'ibb.co' ||
+        url.hostname === 'www.ibb.co' ||
+        url.hostname === 'imgbb.com' ||
+        url.hostname === 'www.imgbb.com'
       ) {
-        return true;
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'Please use the direct image address starting with https://i.ibb.co/ instead of the ImgBB sharing page.',
+        });
+
+        return z.NEVER;
       }
+    }
 
-      try {
-        const url = new URL(value);
-
-        return (
-          (
-            url.protocol === 'https:' ||
-            url.protocol === 'http:'
-          ) &&
-          Boolean(url.hostname) &&
-          !url.username &&
-          !url.password
-        );
-
-      } catch {
-        return false;
-      }
-    },
-    'Enter a valid image URL or local image path.'
-  );
+    return normalized;
+  });
 
 // DATE VALIDATION
 
@@ -75,7 +86,6 @@ const dateSchema = z
 // BANNER VALIDATION
 
 const createBannerSchema = z.object({
-
   eyebrow: z
     .string()
     .trim()
@@ -94,12 +104,9 @@ const createBannerSchema = z.object({
     .min(1)
     .max(5000),
 
-  imageUrl: imageUrlSchema,
+  // SINGLE RESPONSIVE BANNER IMAGE
 
-  mobileImageUrl: imageUrlSchema
-    .or(z.literal(''))
-    .nullable()
-    .optional(),
+  imageUrl: imageUrlSchema,
 
   buttonLabel: z
     .string()
@@ -137,7 +144,6 @@ const createBannerSchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
-
     const denied = await adminDenied({
       request,
       permission: PERMISSIONS.BANNER_VIEW,
@@ -147,16 +153,20 @@ export async function GET(request: NextRequest) {
       return denied;
     }
 
-    const banners = await prisma.homepageBanner.findMany({
-      orderBy: [
-        {
-          displayOrder: 'asc',
-        },
-        {
-          createdAt: 'desc',
-        },
-      ],
-    });
+    const banners =
+      await prisma.homepageBanner.findMany({
+        orderBy: [
+          {
+            displayOrder: 'asc',
+          },
+          {
+            createdAt: 'desc',
+          },
+          {
+            id: 'asc',
+          },
+        ],
+      });
 
     return secureAdminResponse(
       NextResponse.json({
@@ -188,7 +198,7 @@ export async function POST(request: NextRequest) {
 
     const admin = authorization.user;
 
-    // CENTRALIZED REQUEST BODY PROTECTION
+    // SECURE REQUEST BODY VALIDATION
 
     const body = await readJsonBody(
       request,
@@ -206,16 +216,21 @@ export async function POST(request: NextRequest) {
     );
 
     if (!parsed.success) {
+      const details = z.flattenError(parsed.error);
+
+      const fieldErrors = Object.values(
+        details.fieldErrors
+      ).flat();
+
       return badInput(
-        'Invalid banner data.',
-        z.flattenError(parsed.error)
+        fieldErrors[0] || 'Invalid banner data.',
+        details
       );
     }
 
     const {
       startsAt,
       endsAt,
-      mobileImageUrl,
       ...data
     } = parsed.data;
 
@@ -239,26 +254,31 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // ATOMIC BANNER CREATION AND AUDIT LOGGING
+    // CREATE BANNER AND AUDIT LOG
 
     const banner = await prisma.$transaction(
       async (tx) => {
 
-        const createdBanner = await tx.homepageBanner.create({
-          data: {
-            ...data,
+        const createdBanner =
+          await tx.homepageBanner.create({
+            data: {
+              ...data,
 
-            mobileImageUrl: mobileImageUrl || null,
+              // ONE IMAGE FOR ALL SCREEN SIZES
 
-            buttonLabel: data.buttonLabel || 'SHOP NOW',
+              mobileImageUrl: null,
 
-            buttonTarget: data.buttonTarget || 'Shop All',
+              buttonLabel:
+                data.buttonLabel || 'SHOP NOW',
 
-            startsAt: startDate,
+              buttonTarget:
+                data.buttonTarget || 'Shop All',
 
-            endsAt: endDate,
-          },
-        });
+              startsAt: startDate,
+
+              endsAt: endDate,
+            },
+          });
 
         // RECORD VERIFIED ADMIN ACTIVITY
 
@@ -278,7 +298,7 @@ export async function POST(request: NextRequest) {
       }
     );
 
-    // REFRESH WEBSITE AND ADMIN PANEL
+    // REFRESH STOREFRONT AND ADMIN PANEL
 
     refreshAdmin('/admin/banners');
 
@@ -286,8 +306,11 @@ export async function POST(request: NextRequest) {
       NextResponse.json(
         {
           success: true,
+
           banner,
-          message: 'Homepage banner created successfully.',
+
+          message:
+            'Homepage banner created successfully.',
         },
         {
           status: 201,

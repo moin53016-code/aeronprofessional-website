@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { prisma } from '@/lib/db';
 import { PERMISSIONS } from '@/lib/permissions';
+import { normalizeImageUrl } from '@/lib/image-url';
 
 import {
   adminDenied,
@@ -55,7 +56,7 @@ const displayOrderSchema = z
   .min(-MAX_INT)
   .max(MAX_INT);
 
-// URL VALIDATION
+// GENERAL WEBSITE URL VALIDATION
 
 function isValidWebUrl(value: string): boolean {
   try {
@@ -76,22 +77,52 @@ function isValidWebUrl(value: string): boolean {
   }
 }
 
+// SMART IMAGE URL VALIDATION
+
 const imageUrlSchema = z
   .string()
   .trim()
+  .min(1, 'Image URL cannot be empty.')
   .max(2048)
-  .refine(
-    (value) => {
-      if (
-        /^\/(?:uploads|images)\/[a-zA-Z0-9._-]+$/.test(value)
-      ) {
-        return true;
-      }
+  .transform((value, ctx) => {
 
-      return isValidWebUrl(value);
-    },
-    'Use a valid HTTP(S) image URL or local image path.'
-  );
+    const normalized = normalizeImageUrl(value);
+
+    if (!normalized || normalized.length > 2048) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          'Upload an image or enter a valid HTTPS image URL.',
+      });
+
+      return z.NEVER;
+    }
+
+    // REJECT IMGBB SHARING PAGES
+
+    if (normalized.startsWith('https://')) {
+      const url = new URL(normalized);
+
+      if (
+        url.hostname === 'ibb.co' ||
+        url.hostname === 'www.ibb.co' ||
+        url.hostname === 'imgbb.com' ||
+        url.hostname === 'www.imgbb.com'
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'Please use the direct image address starting with https://i.ibb.co/ instead of the ImgBB sharing page.',
+        });
+
+        return z.NEVER;
+      }
+    }
+
+    return normalized;
+  });
+
+// MARKETPLACE URL VALIDATION
 
 const marketplaceUrlSchema = z
   .string()
@@ -175,6 +206,8 @@ const updateProductSchema = z.object({
     .nullable()
     .optional(),
 
+  // SMART PRIMARY IMAGE URL
+
   primaryImageUrl:
     imageUrlSchema.nullable().optional(),
 
@@ -204,6 +237,8 @@ const updateProductSchema = z.object({
     )
     .max(100)
     .optional(),
+
+  // SMART PRODUCT IMAGE URLS
 
   images: z
     .array(
@@ -353,6 +388,9 @@ export async function PUT(
   { params }: Context
 ) {
   try {
+
+    // VERIFY ADMIN PERMISSION
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.PRODUCT_UPDATE,
@@ -369,7 +407,7 @@ export async function PUT(
       return badInput('Invalid product identifier.');
     }
 
-    // REQUEST BODY PROTECTION
+    // SECURE REQUEST BODY VALIDATION
 
     const body = await readJsonBody(
       request,
@@ -380,14 +418,22 @@ export async function PUT(
       return body.response;
     }
 
+    // VALIDATE PRODUCT AND IMAGE URLS
+
     const parsed = updateProductSchema.safeParse(
       body.data
     );
 
     if (!parsed.success) {
+      const details = z.flattenError(parsed.error);
+
+      const fieldErrors = Object.values(
+        details.fieldErrors
+      ).flat();
+
       return badInput(
-        'Invalid product data.',
-        z.flattenError(parsed.error)
+        fieldErrors[0] || 'Invalid product data.',
+        details
       );
     }
 
@@ -405,12 +451,14 @@ export async function PUT(
       ...productData
     } = parsed.data;
 
-    // REMOVE DUPLICATE RELATIONS
+    // REMOVE DUPLICATE CATEGORY ASSIGNMENTS
 
     const uniqueCategoryIds =
       categoryIds === undefined
         ? undefined
         : [...new Set(categoryIds)];
+
+    // REMOVE DUPLICATE MARKETPLACE LINKS
 
     const uniqueMarketplaceLinks =
       marketplaceLinks === undefined
@@ -475,7 +523,7 @@ export async function PUT(
             ? { publishedAt: new Date() }
             : {};
 
-        // UPDATE PRODUCT DETAILS
+        // UPDATE PRODUCT DETAILS AND PRIMARY IMAGE
 
         await tx.product.update({
           where: { id },
@@ -530,7 +578,7 @@ export async function PUT(
           }
         }
 
-        // UPDATE PRODUCT IMAGES
+        // UPDATE NORMALIZED PRODUCT IMAGES
 
         if (images !== undefined) {
 
@@ -544,9 +592,13 @@ export async function PUT(
             await tx.productImage.createMany({
               data: images.map((image) => ({
                 productId: id,
+
                 url: image.url,
+
                 altText: image.altText,
+
                 displayOrder: image.displayOrder,
+
                 isPrimary: image.isPrimary,
               })),
             });
@@ -582,7 +634,9 @@ export async function PUT(
           admin,
           {
             action: AUDIT_ACTIONS.PRODUCT_UPDATED,
+
             entityType: AUDIT_ENTITIES.PRODUCT,
+
             entityId: id,
           },
           tx
@@ -649,12 +703,16 @@ export async function PUT(
       );
     }
 
+    // REFRESH WEBSITE AND ADMIN PANEL
+
     refreshAdmin('/admin/products');
 
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         product: updated.product,
+
         message: 'Product updated successfully.',
       })
     );
@@ -671,6 +729,7 @@ export async function PATCH(
   { params }: Context
 ) {
   try {
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.PRODUCT_UPDATE,
@@ -717,6 +776,7 @@ export async function PATCH(
     };
 
     switch (parsed.data.action) {
+
       case 'publish':
         updateData = {
           status: 'ACTIVE',
@@ -754,10 +814,11 @@ export async function PATCH(
     const product = await prisma.$transaction(
       async (tx) => {
 
-        const updatedProduct = await tx.product.update({
-          where: { id },
-          data: updateData,
-        });
+        const updatedProduct =
+          await tx.product.update({
+            where: { id },
+            data: updateData,
+          });
 
         await recordAdminAction(
           admin,
@@ -798,6 +859,7 @@ export async function DELETE(
   { params }: Context
 ) {
   try {
+
     const authorization = await authorizeAdmin({
       request,
       permission: PERMISSIONS.PRODUCT_DELETE,
@@ -826,12 +888,13 @@ export async function DELETE(
         admin,
         {
           action: AUDIT_ACTIONS.PRODUCT_DELETED,
+
           entityType: AUDIT_ENTITIES.PRODUCT,
+
           entityId: id,
         },
         tx
       );
-
     });
 
     refreshAdmin('/admin/products');
@@ -839,8 +902,11 @@ export async function DELETE(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
+
         deleted: true,
+
         deletedProductCount: 1,
+
         message: 'Product permanently deleted.',
       })
     );

@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { prisma } from '@/lib/db';
 import { PERMISSIONS } from '@/lib/permissions';
+import { normalizeImageUrl } from '@/lib/image-url';
 
 import {
   adminDenied,
@@ -27,43 +28,55 @@ import {
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-// CATEGORY IMAGE URL VALIDATION
+// SMART CATEGORY IMAGE URL VALIDATION
 
 const imageUrlSchema = z
   .string()
   .trim()
   .max(2048)
-  .refine(
-    (value) => {
-      if (value === '') {
-        return true;
-      }
+  .transform((value, ctx) => {
+
+    // CATEGORY IMAGE IS OPTIONAL
+
+    if (value === '') {
+      return '';
+    }
+
+    const normalized = normalizeImageUrl(value);
+
+    if (!normalized || normalized.length > 2048) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          'Upload an image or enter a valid HTTPS image URL.',
+      });
+
+      return z.NEVER;
+    }
+
+    // REJECT IMGBB SHARING PAGES
+
+    if (normalized.startsWith('https://')) {
+      const url = new URL(normalized);
 
       if (
-        /^\/(?:uploads|images)\/[a-zA-Z0-9._-]+$/.test(value)
+        url.hostname === 'ibb.co' ||
+        url.hostname === 'www.ibb.co' ||
+        url.hostname === 'imgbb.com' ||
+        url.hostname === 'www.imgbb.com'
       ) {
-        return true;
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'Please use the direct image address starting with https://i.ibb.co/ instead of the ImgBB sharing page.',
+        });
+
+        return z.NEVER;
       }
+    }
 
-      try {
-        const url = new URL(value);
-
-        return (
-          (
-            url.protocol === 'https:' ||
-            url.protocol === 'http:'
-          ) &&
-          Boolean(url.hostname) &&
-          !url.username &&
-          !url.password
-        );
-
-      } catch {
-        return false;
-      }
-    },
-    'Enter a valid image URL or local image path.'
-  );
+    return normalized;
+  });
 
 // CATEGORY VALIDATION
 
@@ -98,6 +111,8 @@ const createCategorySchema = z.object({
     .nullable()
     .optional(),
 
+  // SMART CATEGORY IMAGE
+
   imageUrl: imageUrlSchema
     .nullable()
     .optional(),
@@ -122,6 +137,7 @@ const createCategorySchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
+
     const denied = await adminDenied({
       request,
       permission: PERMISSIONS.CATEGORY_VIEW,
@@ -181,7 +197,7 @@ export async function POST(request: NextRequest) {
 
     const admin = authorization.user;
 
-    // CENTRALIZED REQUEST BODY PROTECTION
+    // SECURE REQUEST BODY VALIDATION
 
     const body = await readJsonBody(
       request,
@@ -192,16 +208,25 @@ export async function POST(request: NextRequest) {
       return body.response;
     }
 
-    // VALIDATE CATEGORY INPUT
+    // VALIDATE CATEGORY AND IMAGE URL
 
     const result = createCategorySchema.safeParse(
       body.data
     );
 
     if (!result.success) {
+
+      const details = z.flattenError(
+        result.error
+      );
+
+      const fieldErrors = Object.values(
+        details.fieldErrors
+      ).flat();
+
       return badInput(
-        'Invalid category data.',
-        z.flattenError(result.error)
+        fieldErrors[0] || 'Invalid category data.',
+        details
       );
     }
 
@@ -210,16 +235,29 @@ export async function POST(request: NextRequest) {
     const category = await prisma.$transaction(
       async (tx) => {
 
-        const createdCategory = await tx.category.create({
-          data: result.data,
-        });
+        const createdCategory =
+          await tx.category.create({
+            data: {
+              ...result.data,
+
+              imageUrl:
+                result.data.imageUrl || null,
+            },
+          });
+
+        // RECORD VERIFIED ADMIN ACTIVITY
 
         await recordAdminAction(
           admin,
           {
-            action: AUDIT_ACTIONS.CATEGORY_CREATED,
-            entityType: AUDIT_ENTITIES.CATEGORY,
-            entityId: createdCategory.id,
+            action:
+              AUDIT_ACTIONS.CATEGORY_CREATED,
+
+            entityType:
+              AUDIT_ENTITIES.CATEGORY,
+
+            entityId:
+              createdCategory.id,
           },
           tx
         );
@@ -236,7 +274,11 @@ export async function POST(request: NextRequest) {
       NextResponse.json(
         {
           success: true,
+
           category,
+
+          message:
+            'Category created successfully.',
         },
         {
           status: 201,
@@ -258,7 +300,9 @@ export async function POST(request: NextRequest) {
         NextResponse.json(
           {
             success: false,
-            error: 'Category name or slug already exists.',
+
+            error:
+              'Category name or slug already exists.',
           },
           {
             status: 409,
