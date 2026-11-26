@@ -2,36 +2,31 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { prisma } from '@/lib/db';
-
 import { PERMISSIONS } from '@/lib/permissions';
 
 import {
   adminDenied,
+  authorizeAdmin,
+  recordAdminAction,
   apiError,
   badInput,
   refreshAdmin,
   secureAdminResponse,
 } from '@/lib/admin-api';
 
-// ==========================================
-// ROUTE CONFIGURATION
-// ==========================================
+import {
+  AUDIT_ACTIONS,
+  AUDIT_ENTITIES,
+} from '@/lib/audit-log';
 
 export const dynamic = 'force-dynamic';
-
 export const revalidate = 0;
-
-// ==========================================
-// ROUTE CONTEXT
-// ==========================================
 
 type Context = {
   params: Promise<{ id: string }>;
 };
 
-// ==========================================
 // IMAGE URL VALIDATION
-// ==========================================
 
 const imageUrlSchema = z.string().refine(
   (value) => {
@@ -46,7 +41,6 @@ const imageUrlSchema = z.string().refine(
         url.protocol === 'https:' ||
         url.protocol === 'http:'
       );
-
     } catch {
       return false;
     }
@@ -57,22 +51,13 @@ const imageUrlSchema = z.string().refine(
   }
 );
 
-// ==========================================
 // PRODUCT UPDATE VALIDATION
-// ==========================================
 
 const updateProductSchema = z.object({
   name: z.string().min(1).optional(),
-
   slug: z.string().min(1).optional(),
-
   sku: z.string().nullable().optional(),
-
-  shortDescription: z
-    .string()
-    .nullable()
-    .optional(),
-
+  shortDescription: z.string().nullable().optional(),
   description: z.string().optional(),
 
   priceInPaise: z
@@ -100,35 +85,19 @@ const updateProductSchema = z.object({
     .optional(),
 
   isFeatured: z.boolean().optional(),
-
   isNew: z.boolean().optional(),
-
   displayOrder: z.number().int().optional(),
-
   badgeText: z.string().nullable().optional(),
+  primaryImageUrl: imageUrlSchema.nullable().optional(),
 
-  primaryImageUrl: imageUrlSchema
-    .nullable()
-    .optional(),
-
-  categoryIds: z
-    .array(z.string())
-    .optional(),
+  categoryIds: z.array(z.string()).optional(),
 
   specifications: z
     .array(
       z.object({
         label: z.string().min(1),
-
-        value: z
-          .string()
-          .nullable()
-          .optional(),
-
-        displayOrder: z
-          .number()
-          .int()
-          .default(0),
+        value: z.string().nullable().optional(),
+        displayOrder: z.number().int().default(0),
       })
     )
     .optional(),
@@ -137,20 +106,9 @@ const updateProductSchema = z.object({
     .array(
       z.object({
         url: imageUrlSchema,
-
-        altText: z
-          .string()
-          .nullable()
-          .optional(),
-
-        displayOrder: z
-          .number()
-          .int()
-          .default(0),
-
-        isPrimary: z
-          .boolean()
-          .default(false),
+        altText: z.string().nullable().optional(),
+        displayOrder: z.number().int().default(0),
+        isPrimary: z.boolean().default(false),
       })
     )
     .optional(),
@@ -169,7 +127,6 @@ const updateProductSchema = z.object({
                 url.protocol === 'https:' ||
                 url.protocol === 'http:'
               );
-
             } catch {
               return false;
             }
@@ -177,22 +134,14 @@ const updateProductSchema = z.object({
           'Invalid marketplace URL.'
         ),
 
-        isActive: z
-          .boolean()
-          .default(true),
-
-        displayOrder: z
-          .number()
-          .int()
-          .default(0),
+        isActive: z.boolean().default(true),
+        displayOrder: z.number().int().default(0),
       })
     )
     .optional(),
 });
 
-// ==========================================
 // PRODUCT STATUS ACTION VALIDATION
-// ==========================================
 
 const productActionSchema = z.object({
   action: z.enum([
@@ -204,16 +153,13 @@ const productActionSchema = z.object({
   ]),
 });
 
-// ==========================================
 // PRODUCT NOT FOUND RESPONSE
-// ==========================================
 
 function productNotFound() {
   return secureAdminResponse(
     NextResponse.json(
       {
         success: false,
-
         error: 'Product not found.',
       },
       {
@@ -223,22 +169,16 @@ function productNotFound() {
   );
 }
 
-// ==========================================
 // GET INDIVIDUAL PRODUCT
-// ==========================================
 
 export async function GET(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    // AUTHENTICATION AND VIEW PERMISSION
-
     const denied = await adminDenied({
       request,
-
-      permission:
-        PERMISSIONS.PRODUCT_VIEW,
+      permission: PERMISSIONS.PRODUCT_VIEW,
     });
 
     if (denied) {
@@ -247,46 +187,41 @@ export async function GET(
 
     const { id } = await params;
 
-    // FETCH PRODUCT AND RELATED RECORDS
+    const product = await prisma.product.findUnique({
+      where: { id },
 
-    const product =
-      await prisma.product.findUnique({
-        where: {
-          id,
-        },
-
-        include: {
-          images: {
-            orderBy: {
-              displayOrder: 'asc',
-            },
-          },
-
-          specifications: {
-            orderBy: {
-              displayOrder: 'asc',
-            },
-          },
-
-          categories: {
-            include: {
-              category: true,
-            },
-          },
-
-          marketplaceLinks: {
-            include: {
-              marketplace: true,
-            },
-          },
-
-          discountProducts: {
-            include: {
-              campaign: true,
-            },
+      include: {
+        images: {
+          orderBy: {
+            displayOrder: 'asc',
           },
         },
-      });
+
+        specifications: {
+          orderBy: {
+            displayOrder: 'asc',
+          },
+        },
+
+        categories: {
+          include: {
+            category: true,
+          },
+        },
+
+        marketplaceLinks: {
+          include: {
+            marketplace: true,
+          },
+        },
+
+        discountProducts: {
+          include: {
+            campaign: true,
+          },
+        },
+      },
+    });
 
     if (!product) {
       return productNotFound();
@@ -295,55 +230,38 @@ export async function GET(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
-
         product,
       })
     );
-
   } catch (error) {
-    return apiError(
-      error,
-      'Product'
-    );
+    return apiError(error, 'Product');
   }
 }
 
-// ==========================================
 // UPDATE PRODUCT
-// ==========================================
 
 export async function PUT(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    // ======================================
-    // AUTHENTICATION, CSRF AND PERMISSIONS
-    // ======================================
-
-    const denied = await adminDenied({
+    const authorization = await authorizeAdmin({
       request,
-
-      permission:
-        PERMISSIONS.PRODUCT_UPDATE,
+      permission: PERMISSIONS.PRODUCT_UPDATE,
     });
 
-    if (denied) {
-      return denied;
+    if (!authorization.ok) {
+      return authorization.response;
     }
 
+    const admin = authorization.user;
     const { id } = await params;
-
-    // ======================================
-    // VALIDATE REQUEST BODY
-    // ======================================
 
     const body = await request
       .json()
       .catch(() => null);
 
-    const parsed =
-      updateProductSchema.safeParse(body);
+    const parsed = updateProductSchema.safeParse(body);
 
     if (!parsed.success) {
       return badInput(
@@ -360,306 +278,283 @@ export async function PUT(
       ...productData
     } = parsed.data;
 
-    // ======================================
-    // PREVENT DUPLICATE CATEGORY ASSIGNMENTS
-    // ======================================
-
     const uniqueCategoryIds =
       categoryIds === undefined
         ? undefined
         : [...new Set(categoryIds)];
-
-    // ======================================
-    // PREVENT DUPLICATE MARKETPLACE LINKS
-    // ======================================
 
     const uniqueMarketplaceLinks =
       marketplaceLinks === undefined
         ? undefined
         : [
             ...new Map(
-              marketplaceLinks.map(
-                (link) => [
-                  link.marketplaceId,
-                  link,
-                ]
-              )
+              marketplaceLinks.map((link) => [
+                link.marketplaceId,
+                link,
+              ])
             ).values(),
           ];
 
-    // ======================================
-    // ATOMIC DATABASE TRANSACTION
-    // ======================================
+    // ATOMIC PRODUCT UPDATE AND AUDIT LOGGING
 
-    const updated =
-      await prisma.$transaction(
-        async (tx) => {
+    const updated = await prisma.$transaction(
+      async (tx) => {
 
-          let publishedAtUpdate: {
-            publishedAt?: Date;
-          } = {};
+        const existing =
+          await tx.product.findUnique({
+            where: { id },
 
-          // PRESERVE ORIGINAL PUBLICATION DATE
-
-          if (
-            productData.status === 'ACTIVE'
-          ) {
-            const existing =
-              await tx.product.findUnique({
-                where: {
-                  id,
-                },
-
-                select: {
-                  publishedAt: true,
-                },
-              });
-
-            if (
-              existing &&
-              !existing.publishedAt
-            ) {
-              publishedAtUpdate = {
-                publishedAt: new Date(),
-              };
-            }
-          }
-
-          // UPDATE PRODUCT DETAILS
-
-          await tx.product.update({
-            where: {
-              id,
-            },
-
-            data: {
-              ...productData,
-
-              ...publishedAtUpdate,
+            select: {
+              id: true,
+              publishedAt: true,
+              status: true,
+              priceInPaise: true,
+              originalPriceInPaise: true,
             },
           });
 
-          // ==================================
-          // UPDATE PRODUCT CATEGORIES
-          // ==================================
-
-          if (
-            uniqueCategoryIds !== undefined
-          ) {
-            await tx.productCategory.deleteMany({
-              where: {
-                productId: id,
-              },
-            });
-
-            if (uniqueCategoryIds.length > 0) {
-              await tx.productCategory.createMany({
-                data: uniqueCategoryIds.map(
-                  (categoryId) => ({
-                    productId: id,
-
-                    categoryId,
-                  })
-                ),
-              });
-            }
-          }
-
-          // ==================================
-          // UPDATE PRODUCT SPECIFICATIONS
-          // ==================================
-
-          if (specifications !== undefined) {
-            await tx.productSpecification.deleteMany({
-              where: {
-                productId: id,
-              },
-            });
-
-            if (specifications.length > 0) {
-              await tx.productSpecification.createMany({
-                data: specifications.map(
-                  (spec) => ({
-                    productId: id,
-
-                    label: spec.label,
-
-                    value: spec.value,
-
-                    displayOrder:
-                      spec.displayOrder,
-                  })
-                ),
-              });
-            }
-          }
-
-          // ==================================
-          // UPDATE PRODUCT IMAGES
-          // ==================================
-
-          if (images !== undefined) {
-            await tx.productImage.deleteMany({
-              where: {
-                productId: id,
-              },
-            });
-
-            if (images.length > 0) {
-              await tx.productImage.createMany({
-                data: images.map(
-                  (image) => ({
-                    productId: id,
-
-                    url: image.url,
-
-                    altText: image.altText,
-
-                    displayOrder:
-                      image.displayOrder,
-
-                    isPrimary:
-                      image.isPrimary,
-                  })
-                ),
-              });
-            }
-          }
-
-          // ==================================
-          // UPDATE MARKETPLACE LINKS
-          // ==================================
-
-          if (
-            uniqueMarketplaceLinks !== undefined
-          ) {
-            await tx.productMarketplaceLink.deleteMany({
-              where: {
-                productId: id,
-              },
-            });
-
-            if (
-              uniqueMarketplaceLinks.length > 0
-            ) {
-              await tx.productMarketplaceLink.createMany({
-                data: uniqueMarketplaceLinks.map(
-                  (link) => ({
-                    productId: id,
-
-                    marketplaceId:
-                      link.marketplaceId,
-
-                    url: link.url,
-
-                    isActive:
-                      link.isActive,
-
-                    displayOrder:
-                      link.displayOrder,
-                  })
-                ),
-              });
-            }
-          }
-
-          // ==================================
-          // RETURN UPDATED PRODUCT
-          // ==================================
-
-          return tx.product.findUnique({
-            where: {
-              id,
-            },
-
-            include: {
-              images: true,
-
-              specifications: true,
-
-              categories: {
-                include: {
-                  category: true,
-                },
-              },
-
-              marketplaceLinks: {
-                include: {
-                  marketplace: true,
-                },
-              },
-            },
-          });
+        if (!existing) {
+          return {
+            outcome: 'NOT_FOUND' as const,
+          };
         }
-      );
 
-    // ======================================
-    // REFRESH WEBSITE AND ADMIN PANEL
-    // ======================================
+        // VALIDATE EFFECTIVE PRODUCT PRICES
+
+        const sellingPrice =
+          productData.priceInPaise ??
+          existing.priceInPaise;
+
+        const originalPrice =
+          productData.originalPriceInPaise === undefined
+            ? existing.originalPriceInPaise
+            : productData.originalPriceInPaise;
+
+        if (
+          originalPrice !== null &&
+          originalPrice < sellingPrice
+        ) {
+          return {
+            outcome: 'INVALID_PRICE' as const,
+          };
+        }
+
+        // PRESERVE ORIGINAL PUBLICATION DATE
+
+        const publishedAtUpdate =
+          productData.status === 'ACTIVE' &&
+          !existing.publishedAt
+            ? { publishedAt: new Date() }
+            : {};
+
+        // UPDATE PRODUCT DETAILS
+
+        await tx.product.update({
+          where: { id },
+
+          data: {
+            ...productData,
+            ...publishedAtUpdate,
+          },
+        });
+
+        // UPDATE PRODUCT CATEGORIES
+
+        if (uniqueCategoryIds !== undefined) {
+          await tx.productCategory.deleteMany({
+            where: {
+              productId: id,
+            },
+          });
+
+          if (uniqueCategoryIds.length > 0) {
+            await tx.productCategory.createMany({
+              data: uniqueCategoryIds.map(
+                (categoryId) => ({
+                  productId: id,
+                  categoryId,
+                })
+              ),
+            });
+          }
+        }
+
+        // UPDATE PRODUCT SPECIFICATIONS
+
+        if (specifications !== undefined) {
+          await tx.productSpecification.deleteMany({
+            where: {
+              productId: id,
+            },
+          });
+
+          if (specifications.length > 0) {
+            await tx.productSpecification.createMany({
+              data: specifications.map((spec) => ({
+                productId: id,
+                label: spec.label,
+                value: spec.value,
+                displayOrder: spec.displayOrder,
+              })),
+            });
+          }
+        }
+
+        // UPDATE PRODUCT IMAGES
+
+        if (images !== undefined) {
+          await tx.productImage.deleteMany({
+            where: {
+              productId: id,
+            },
+          });
+
+          if (images.length > 0) {
+            await tx.productImage.createMany({
+              data: images.map((image) => ({
+                productId: id,
+                url: image.url,
+                altText: image.altText,
+                displayOrder: image.displayOrder,
+                isPrimary: image.isPrimary,
+              })),
+            });
+          }
+        }
+
+        // UPDATE MARKETPLACE LINKS
+
+        if (uniqueMarketplaceLinks !== undefined) {
+          await tx.productMarketplaceLink.deleteMany({
+            where: {
+              productId: id,
+            },
+          });
+
+          if (uniqueMarketplaceLinks.length > 0) {
+            await tx.productMarketplaceLink.createMany({
+              data: uniqueMarketplaceLinks.map((link) => ({
+                productId: id,
+                marketplaceId: link.marketplaceId,
+                url: link.url,
+                isActive: link.isActive,
+                displayOrder: link.displayOrder,
+              })),
+            });
+          }
+        }
+
+        // RECORD PRODUCT UPDATE
+
+        await recordAdminAction(
+          admin,
+          {
+            action: AUDIT_ACTIONS.PRODUCT_UPDATED,
+            entityType: AUDIT_ENTITIES.PRODUCT,
+            entityId: id,
+          },
+          tx
+        );
+
+        // RECORD STATUS CHANGE WHEN APPLICABLE
+
+        if (
+          productData.status !== undefined &&
+          productData.status !== existing.status
+        ) {
+          await recordAdminAction(
+            admin,
+            {
+              action: AUDIT_ACTIONS.PRODUCT_STATUS_CHANGED,
+              entityType: AUDIT_ENTITIES.PRODUCT,
+              entityId: id,
+            },
+            tx
+          );
+        }
+
+        // RETURN UPDATED PRODUCT
+
+        const product = await tx.product.findUniqueOrThrow({
+          where: { id },
+
+          include: {
+            images: true,
+            specifications: true,
+
+            categories: {
+              include: {
+                category: true,
+              },
+            },
+
+            marketplaceLinks: {
+              include: {
+                marketplace: true,
+              },
+            },
+          },
+        });
+
+        return {
+          outcome: 'UPDATED' as const,
+          product,
+        };
+      }
+    );
+
+    if (updated.outcome === 'NOT_FOUND') {
+      return productNotFound();
+    }
+
+    if (updated.outcome === 'INVALID_PRICE') {
+      return badInput(
+        'Original price cannot be lower than selling price.'
+      );
+    }
 
     refreshAdmin('/admin/products');
 
     return secureAdminResponse(
       NextResponse.json({
         success: true,
-
-        product: updated,
-
-        message:
-          'Product updated successfully.',
+        product: updated.product,
+        message: 'Product updated successfully.',
       })
     );
-
   } catch (error) {
-    return apiError(
-      error,
-      'Product'
-    );
+    return apiError(error, 'Product');
   }
 }
 
-// ==========================================
 // PRODUCT STATUS ACTIONS
-// ==========================================
 
 export async function PATCH(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    // ======================================
-    // AUTHENTICATION, CSRF AND PERMISSIONS
-    // ======================================
-
-    const denied = await adminDenied({
+    const authorization = await authorizeAdmin({
       request,
-
-      permission:
-        PERMISSIONS.PRODUCT_UPDATE,
+      permission: PERMISSIONS.PRODUCT_UPDATE,
     });
 
-    if (denied) {
-      return denied;
+    if (!authorization.ok) {
+      return authorization.response;
     }
 
+    const admin = authorization.user;
     const { id } = await params;
 
     const body = await request
       .json()
       .catch(() => null);
 
-    const parsed =
-      productActionSchema.safeParse(body);
+    const parsed = productActionSchema.safeParse(body);
 
     if (!parsed.success) {
-      return badInput(
-        'Invalid product action.'
-      );
+      return badInput('Invalid product action.');
     }
-
-    // ======================================
-    // PREPARE STATUS UPDATE
-    // ======================================
 
     let updateData: {
       status:
@@ -675,7 +570,6 @@ export async function PATCH(
       case 'publish':
         updateData = {
           status: 'ACTIVE',
-
           publishedAt: new Date(),
         };
         break;
@@ -705,74 +599,81 @@ export async function PATCH(
         break;
     }
 
-    // ======================================
-    // UPDATE PRODUCT STATUS
-    // ======================================
+    // ATOMIC STATUS UPDATE AND AUDIT LOGGING
 
-    const product =
-      await prisma.product.update({
-        where: {
-          id,
-        },
+    const product = await prisma.$transaction(
+      async (tx) => {
+        const updatedProduct =
+          await tx.product.update({
+            where: { id },
+            data: updateData,
+          });
 
-        data: updateData,
-      });
+        await recordAdminAction(
+          admin,
+          {
+            action: AUDIT_ACTIONS.PRODUCT_STATUS_CHANGED,
+            entityType: AUDIT_ENTITIES.PRODUCT,
+            entityId: id,
+          },
+          tx
+        );
+
+        return updatedProduct;
+      }
+    );
 
     refreshAdmin('/admin/products');
 
     return secureAdminResponse(
       NextResponse.json({
         success: true,
-
         product,
       })
     );
-
   } catch (error) {
-    return apiError(
-      error,
-      'Product'
-    );
+    return apiError(error, 'Product');
   }
 }
 
-// ==========================================
 // PERMANENT PRODUCT DELETION
 // OWNER AND ADMIN ONLY
-// ==========================================
 
 export async function DELETE(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    // ======================================
-    // REQUIRE PRODUCT DELETE PERMISSION
-    // ======================================
-
-    const denied = await adminDenied({
+    const authorization = await authorizeAdmin({
       request,
-
-      permission:
-        PERMISSIONS.PRODUCT_DELETE,
+      permission: PERMISSIONS.PRODUCT_DELETE,
     });
 
-    if (denied) {
-      return denied;
+    if (!authorization.ok) {
+      return authorization.response;
     }
 
+    const admin = authorization.user;
     const { id } = await params;
 
-    // ======================================
-    // PERMANENTLY DELETE PRODUCT
-    // RELATED DATABASE ROWS ARE REMOVED
-    // THROUGH CASCADE RELATIONS
-    // ======================================
+    // ATOMIC PRODUCT DELETION AND AUDIT LOGGING
 
-    await prisma.product.delete({
-      where: {
-        id,
-      },
+    await prisma.$transaction(async (tx) => {
+
+      await tx.product.delete({
+        where: { id },
+      });
+
+      await recordAdminAction(
+        admin,
+        {
+          action: AUDIT_ACTIONS.PRODUCT_DELETED,
+          entityType: AUDIT_ENTITIES.PRODUCT,
+          entityId: id,
+        },
+        tx
+      );
+
     });
 
     refreshAdmin('/admin/products');
@@ -780,20 +681,12 @@ export async function DELETE(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
-
         deleted: true,
-
         deletedProductCount: 1,
-
-        message:
-          'Product permanently deleted.',
+        message: 'Product permanently deleted.',
       })
     );
-
   } catch (error) {
-    return apiError(
-      error,
-      'Product'
-    );
+    return apiError(error, 'Product');
   }
 }

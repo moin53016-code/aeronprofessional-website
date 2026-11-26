@@ -1,46 +1,33 @@
-import {
-  NextRequest,
-  NextResponse,
-} from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
-import {
-  mkdir,
-  writeFile,
-} from 'node:fs/promises';
-
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-
 import { randomUUID } from 'node:crypto';
 
 import { PERMISSIONS } from '@/lib/permissions';
 
 import {
-  adminDenied,
+  authorizeAdmin,
+  recordAdminActionSafely,
   badInput,
   apiError,
   secureAdminResponse,
 } from '@/lib/admin-api';
 
-// ==========================================
-// ROUTE CONFIGURATION
-// ==========================================
+import {
+  AUDIT_ACTIONS,
+  AUDIT_ENTITIES,
+} from '@/lib/audit-log';
 
 export const runtime = 'nodejs';
-
 export const dynamic = 'force-dynamic';
-
 export const revalidate = 0;
 
-// ==========================================
-// MAXIMUM IMAGE SIZE
-// 10 MB PER IMAGE
-// ==========================================
+// MAXIMUM IMAGE SIZE: 10 MB
 
 const MAX_SIZE = 10 * 1024 * 1024;
 
-// ==========================================
 // ALLOWED IMAGE FORMATS
-// ==========================================
 
 const extensions = new Map<string, string>([
   ['image/jpeg', 'jpg'],
@@ -49,9 +36,7 @@ const extensions = new Map<string, string>([
   ['image/gif', 'gif'],
 ]);
 
-// ==========================================
-// VERIFY ACTUAL IMAGE FILE SIGNATURE
-// ==========================================
+// VERIFY IMAGE FILE SIGNATURE
 
 function matchesImageType(
   buffer: Buffer,
@@ -88,16 +73,8 @@ function matchesImageType(
   if (type === 'image/webp') {
     return (
       buffer.length >= 12 &&
-      buffer.toString(
-        'ascii',
-        0,
-        4
-      ) === 'RIFF' &&
-      buffer.toString(
-        'ascii',
-        8,
-        12
-      ) === 'WEBP'
+      buffer.toString('ascii', 0, 4) === 'RIFF' &&
+      buffer.toString('ascii', 8, 12) === 'WEBP'
     );
   }
 
@@ -105,11 +82,7 @@ function matchesImageType(
 
   if (type === 'image/gif') {
     const signature =
-      buffer.toString(
-        'ascii',
-        0,
-        6
-      );
+      buffer.toString('ascii', 0, 6);
 
     return (
       buffer.length >= 6 &&
@@ -120,53 +93,40 @@ function matchesImageType(
     );
   }
 
-  // REJECT UNSUPPORTED FILE TYPES
-
   return false;
 }
 
-// ==========================================
 // UPLOAD IMAGE
-// ==========================================
 
-export async function POST(
-  request: NextRequest
-) {
+export async function POST(request: NextRequest) {
   try {
-    // ======================================
-    // AUTHENTICATION, CSRF AND PERMISSIONS
-    // ======================================
 
-    const denied = await adminDenied({
+    // VERIFY ADMIN AND MEDIA UPLOAD PERMISSION
+
+    const authorization = await authorizeAdmin({
       request,
-
-      permission:
-        PERMISSIONS.MEDIA_UPLOAD,
+      permission: PERMISSIONS.MEDIA_UPLOAD,
     });
 
-    if (denied) {
-      return denied;
+    if (!authorization.ok) {
+      return authorization.response;
     }
 
-    // ======================================
+    const admin = authorization.user;
+
     // VERIFY REQUEST CONTENT TYPE
-    // ======================================
 
-    const contentType =
-      request.headers
-        .get('content-type')
-        ?.split(';')[0]
-        .trim()
-        .toLowerCase();
+    const contentType = request.headers
+      .get('content-type')
+      ?.split(';')[0]
+      .trim()
+      .toLowerCase();
 
-    if (
-      contentType !== 'multipart/form-data'
-    ) {
+    if (contentType !== 'multipart/form-data') {
       return secureAdminResponse(
         NextResponse.json(
           {
             success: false,
-
             error:
               'Image uploads must use multipart/form-data.',
           },
@@ -177,14 +137,11 @@ export async function POST(
       );
     }
 
-    // ======================================
     // PARSE MULTIPART FORM DATA
-    // ======================================
 
-    const formData =
-      await request
-        .formData()
-        .catch(() => null);
+    const formData = await request
+      .formData()
+      .catch(() => null);
 
     if (!formData) {
       return badInput(
@@ -192,12 +149,9 @@ export async function POST(
       );
     }
 
-    // ======================================
     // REQUIRE EXACTLY ONE IMAGE FILE
-    // ======================================
 
-    const files =
-      formData.getAll('file');
+    const files = formData.getAll('file');
 
     if (files.length !== 1) {
       return badInput(
@@ -207,28 +161,21 @@ export async function POST(
 
     const file = files[0];
 
-    if (
-      !file ||
-      typeof file === 'string'
-    ) {
+    if (!file || typeof file === 'string') {
       return badInput(
         'Please select an image file.'
       );
     }
 
-    // ======================================
-    // VALIDATE ALLOWED IMAGE MIME TYPE
-    // ======================================
+    // VALIDATE IMAGE MIME TYPE
 
-    const extension =
-      extensions.get(file.type);
+    const extension = extensions.get(file.type);
 
     if (!extension) {
       return secureAdminResponse(
         NextResponse.json(
           {
             success: false,
-
             error:
               'Only JPG, PNG, WebP and GIF are supported.',
           },
@@ -239,9 +186,7 @@ export async function POST(
       );
     }
 
-    // ======================================
     // REJECT EMPTY IMAGE FILES
-    // ======================================
 
     if (file.size <= 0) {
       return badInput(
@@ -249,16 +194,13 @@ export async function POST(
       );
     }
 
-    // ======================================
     // ENFORCE MAXIMUM IMAGE SIZE
-    // ======================================
 
     if (file.size > MAX_SIZE) {
       return secureAdminResponse(
         NextResponse.json(
           {
             success: false,
-
             error:
               'Image must be no larger than 10 MB.',
           },
@@ -269,17 +211,13 @@ export async function POST(
       );
     }
 
-    // ======================================
     // CONVERT IMAGE TO BUFFER
-    // ======================================
 
     const buffer = Buffer.from(
       await file.arrayBuffer()
     );
 
-    // ======================================
     // VERIFY ACTUAL IMAGE FILE SIZE
-    // ======================================
 
     if (
       buffer.length <= 0 ||
@@ -295,7 +233,6 @@ export async function POST(
         NextResponse.json(
           {
             success: false,
-
             error:
               'Image must be no larger than 10 MB.',
           },
@@ -306,81 +243,63 @@ export async function POST(
       );
     }
 
-    // ======================================
-    // VERIFY ACTUAL FILE SIGNATURE
-    // ======================================
+    // VERIFY IMAGE FILE SIGNATURE
 
-    if (
-      !matchesImageType(
-        buffer,
-        file.type
-      )
-    ) {
+    if (!matchesImageType(buffer, file.type)) {
       return badInput(
         'Invalid image file contents.'
       );
     }
 
-    // ======================================
-    // GENERATE SECURE UNIQUE FILENAME
-    // NEVER TRUST ORIGINAL USER FILENAME
-    // ======================================
+    // GENERATE SECURE UNIQUE MEDIA IDENTIFIER
 
-    const filename =
-      `${Date.now()}-${randomUUID()}.${extension}`;
+    const mediaId = `${Date.now()}-${randomUUID()}`;
 
-    // ======================================
+    const filename = `${mediaId}.${extension}`;
+
     // LOCAL UPLOAD DIRECTORY
-    // ======================================
 
     const uploadDirectory = join(
       process.cwd(),
-
       'public',
-
       'uploads'
     );
 
-    // ======================================
-    // ENSURE UPLOAD DIRECTORY EXISTS
-    // ======================================
+    await mkdir(uploadDirectory, {
+      recursive: true,
+    });
 
-    await mkdir(
-      uploadDirectory,
-      {
-        recursive: true,
-      }
-    );
-
-    // ======================================
-    // SAVE IMAGE WITHOUT OVERWRITING
-    // EXISTING FILES
-    // ======================================
+    // SAVE IMAGE WITHOUT OVERWRITING EXISTING FILES
 
     await writeFile(
-      join(
-        uploadDirectory,
-        filename
-      ),
-
+      join(uploadDirectory, filename),
       buffer,
-
       {
         flag: 'wx',
       }
     );
 
-    // ======================================
+    // RECORD VERIFIED ADMIN UPLOAD ACTIVITY
+    // DO NOT STORE ORIGINAL USER FILENAMES,
+    // FILE CONTENTS OR ABSOLUTE SERVER PATHS.
+
+    await recordAdminActionSafely(
+      admin,
+      {
+        action: AUDIT_ACTIONS.MEDIA_UPLOADED,
+        entityType: AUDIT_ENTITIES.MEDIA,
+        entityId: mediaId,
+      }
+    );
+
     // SECURE SUCCESS RESPONSE
-    // ======================================
 
     return secureAdminResponse(
       NextResponse.json(
         {
           success: true,
 
-          url:
-            `/uploads/${filename}`,
+          url: `/uploads/${filename}`,
 
           filename,
 
@@ -395,9 +314,6 @@ export async function POST(
     );
 
   } catch (error) {
-    return apiError(
-      error,
-      'Image upload'
-    );
+    return apiError(error, 'Image upload');
   }
 }

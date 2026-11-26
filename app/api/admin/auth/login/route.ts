@@ -1,4 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import {
+  NextRequest,
+  NextResponse,
+} from 'next/server';
 
 import { prisma } from '@/lib/db';
 
@@ -11,7 +14,27 @@ import {
   checkLoginRateLimit,
 } from '@/lib/login-rate-limit';
 
+import {
+  csrfGuard,
+} from '@/lib/csrf';
+
+import {
+  secureAdminResponse,
+} from '@/lib/admin-api';
+
+import {
+  isValidRole,
+} from '@/lib/permissions';
+
+import {
+  AUDIT_ACTIONS,
+  AUDIT_ENTITIES,
+  AUDIT_REASONS,
+  writeAuditLog,
+} from '@/lib/audit-log';
+
 import bcrypt from 'bcryptjs';
+
 import { z } from 'zod';
 
 // ==========================================
@@ -31,7 +54,7 @@ const DUMMY_PASSWORD_HASH =
   '$2y$12$sLd/y/iEO5pqFM4MDXXM1OWHf3c2CHXGRj1ofMKWQ9489z2lJOmzi';
 
 // ==========================================
-// LOGIN VALIDATION
+// LOGIN INPUT VALIDATION
 // ==========================================
 
 const loginSchema = z.object({
@@ -47,51 +70,29 @@ const loginSchema = z.object({
     .max(72)
     .refine(
       (password) =>
-        new TextEncoder().encode(password).length <= 72,
+        new TextEncoder()
+          .encode(password)
+          .length <= 72,
+
       'Invalid password length.'
     ),
 });
 
 // ==========================================
-// SECURE RESPONSE HEADERS
-// ==========================================
-
-function secureResponse(response: NextResponse) {
-  response.headers.set(
-    'Cache-Control',
-    'no-store, no-cache, must-revalidate, private'
-  );
-
-  response.headers.set(
-    'Pragma',
-    'no-cache'
-  );
-
-  response.headers.set(
-    'Expires',
-    '0'
-  );
-
-  response.headers.set(
-    'X-Content-Type-Options',
-    'nosniff'
-  );
-
-  return response;
-}
-
-// ==========================================
-// STANDARD ERROR RESPONSE
+// SECURE LOGIN ERROR RESPONSE
 // ==========================================
 
 function loginError(
   message: string,
+
   status: number
 ) {
-  return secureResponse(
+
+  return secureAdminResponse(
     NextResponse.json(
       {
         success: false,
+
         error: message,
       },
       {
@@ -108,8 +109,25 @@ function loginError(
 export async function POST(
   request: NextRequest
 ) {
+
   try {
+
+    // ======================================
+    // ROUTE-LEVEL CSRF PROTECTION
+    // ======================================
+
+    const csrfDenied =
+      csrfGuard(request);
+
+    if (csrfDenied) {
+      return secureAdminResponse(
+        csrfDenied
+      );
+    }
+
+    // ======================================
     // VALIDATE REQUEST CONTENT TYPE
+    // ======================================
 
     const contentType =
       request.headers
@@ -118,20 +136,27 @@ export async function POST(
         .trim()
         .toLowerCase();
 
-    if (contentType !== 'application/json') {
+    if (
+      contentType !== 'application/json'
+    ) {
       return loginError(
         'Invalid request format.',
+
         415
       );
     }
 
+    // ======================================
     // PARSE REQUEST BODY
+    // ======================================
 
     const body = await request
       .json()
       .catch(() => null);
 
+    // ======================================
     // VALIDATE LOGIN INPUT
+    // ======================================
 
     const result =
       loginSchema.safeParse(body);
@@ -139,27 +164,42 @@ export async function POST(
     if (!result.success) {
       return loginError(
         'Invalid email or password.',
+
         400
       );
     }
 
-    const { email, password } = result.data;
+    const {
+      email,
+      password,
+    } = result.data;
 
     // ======================================
-    // DATABASE-BACKED RATE LIMITING
+    // DATABASE-BACKED LOGIN RATE LIMITING
     // ======================================
 
     const rateLimit =
-      await checkLoginRateLimit(email);
+      await checkLoginRateLimit(
+        email
+      );
 
     if (!rateLimit.allowed) {
+
+      // DO NOT CREATE A DATABASE AUDIT RECORD
+      // FOR EVERY BLOCKED REQUEST.
+      //
+      // THIS PREVENTS UNLIMITED AUDIT LOG
+      // WRITES DURING LOGIN FLOODING.
+
       const response = loginError(
         'Too many login attempts. Please try again later.',
+
         429
       );
 
       response.headers.set(
         'Retry-After',
+
         String(rateLimit.retryAfter)
       );
 
@@ -178,39 +218,84 @@ export async function POST(
 
         select: {
           id: true,
+
           email: true,
+
           name: true,
+
           role: true,
+
           isActive: true,
+
           passwordHash: true,
         },
       });
+
+    // ======================================
+    // VALIDATE ADMIN ACCOUNT ELIGIBILITY
+    // ======================================
+
+    const isEligibleAccount =
+      Boolean(
+        user &&
+        user.isActive &&
+        isValidRole(user.role)
+      );
 
     // ======================================
     // TIMING ATTACK PROTECTION
     // ======================================
 
     const passwordHash =
-      user?.isActive
+      user && isEligibleAccount
         ? user.passwordHash
         : DUMMY_PASSWORD_HASH;
 
     const isValidPassword =
       await bcrypt.compare(
         password,
+
         passwordHash
       );
 
-    // SAME ERROR FOR UNKNOWN EMAIL,
-    // INACTIVE ACCOUNT AND WRONG PASSWORD
+    // ======================================
+    // HANDLE FAILED LOGIN
+    // ======================================
 
     if (
       !user ||
-      !user.isActive ||
+      !isEligibleAccount ||
       !isValidPassword
     ) {
+
+      // RECORD FAILED AUTHENTICATION ATTEMPT
+      //
+      // NEVER STORE EMAIL INPUT, PASSWORD,
+      // PASSWORD HASH OR REQUEST BODY.
+      //
+      // THE REQUEST HAS ALREADY PASSED
+      // DATABASE-BACKED RATE LIMITING.
+
+      await writeAuditLog({
+        action:
+          AUDIT_ACTIONS.LOGIN_FAILED,
+
+        entityType:
+          AUDIT_ENTITIES.SECURITY,
+
+        reason:
+          AUDIT_REASONS.INVALID_CREDENTIALS,
+      });
+
+      // SAME RESPONSE FOR:
+      // - UNKNOWN EMAIL
+      // - WRONG PASSWORD
+      // - INACTIVE ACCOUNT
+      // - INVALID ROLE
+
       return loginError(
         'Invalid email or password.',
+
         401
       );
     }
@@ -220,7 +305,13 @@ export async function POST(
     // ======================================
 
     const token =
-      await createSession(user.id);
+      await createSession(
+        user.id
+      );
+
+    // ======================================
+    // GENERATE SECURE COOKIE CONFIGURATION
+    // ======================================
 
     const cookieConfig =
       setSessionCookie(token);
@@ -234,8 +325,11 @@ export async function POST(
 
       user: {
         id: user.id,
+
         email: user.email,
+
         name: user.name,
+
         role: user.role,
       },
     });
@@ -246,7 +340,9 @@ export async function POST(
 
     response.cookies.set(
       cookieConfig.name,
+
       cookieConfig.value,
+
       {
         httpOnly:
           cookieConfig.httpOnly,
@@ -266,14 +362,45 @@ export async function POST(
     );
 
     // ======================================
-    // RETURN SECURE RESPONSE
+    // RECORD SUCCESSFUL AUTHENTICATION
+    //
+    // ONLY VERIFIED ADMIN IDENTIFIERS
+    // ARE INCLUDED IN THE AUDIT RECORD.
     // ======================================
 
-    return secureResponse(response);
+    await writeAuditLog({
+      adminId:
+        user.id,
+
+      action:
+        AUDIT_ACTIONS.LOGIN_SUCCESS,
+
+      entityType:
+        AUDIT_ENTITIES.ADMIN_USER,
+
+      entityId:
+        user.id,
+    });
+
+    // ======================================
+    // RETURN SECURE LOGIN RESPONSE
+    // ======================================
+
+    return secureAdminResponse(
+      response
+    );
 
   } catch {
-    // DO NOT LOG PASSWORDS, SESSION TOKENS
-    // OR SENSITIVE DATABASE ERROR DETAILS
+
+    // ======================================
+    // SAFE AUTHENTICATION ERROR LOGGING
+    //
+    // NEVER EXPOSE:
+    // - PASSWORDS
+    // - SESSION TOKENS
+    // - DATABASE CONNECTION STRINGS
+    // - SENSITIVE ERROR DETAILS
+    // ======================================
 
     console.error(
       '[AUTH] Admin login request failed.'
@@ -281,6 +408,7 @@ export async function POST(
 
     return loginError(
       'Unable to log in. Please try again later.',
+
       500
     );
   }

@@ -1,90 +1,53 @@
-import {
-  NextRequest,
-  NextResponse,
-} from 'next/server';
-
+import { NextRequest, NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
-
 import { z } from 'zod';
 
 import { prisma } from '@/lib/db';
-
 import { PERMISSIONS } from '@/lib/permissions';
 
 import {
   adminDenied,
+  authorizeAdmin,
+  recordAdminAction,
   apiError,
   badInput,
   refreshAdmin,
   secureAdminResponse,
 } from '@/lib/admin-api';
 
-// ==========================================
-// ROUTE CONFIGURATION
-// ==========================================
+import {
+  AUDIT_ACTIONS,
+  AUDIT_ENTITIES,
+} from '@/lib/audit-log';
 
 export const dynamic = 'force-dynamic';
-
 export const revalidate = 0;
-
-// ==========================================
-// ROUTE CONTEXT
-// ==========================================
 
 type Context = {
   params: Promise<{ id: string }>;
 };
 
-// ==========================================
 // CATEGORY UPDATE VALIDATION
-// ==========================================
 
 const updateCategorySchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1)
-    .optional(),
+  name: z.string().trim().min(1).optional(),
 
-  slug: z
-    .string()
-    .trim()
-    .min(1)
-    .optional(),
+  slug: z.string().trim().min(1).optional(),
 
-  label: z
-    .string()
-    .trim()
-    .min(1)
-    .optional(),
+  label: z.string().trim().min(1).optional(),
 
-  description: z
-    .string()
-    .nullable()
-    .optional(),
+  description: z.string().nullable().optional(),
 
-  imageUrl: z
-    .string()
-    .nullable()
-    .optional(),
+  imageUrl: z.string().nullable().optional(),
 
-  displayOrder: z
-    .number()
-    .int()
-    .optional(),
+  displayOrder: z.number().int().optional(),
 
-  isVisible: z
-    .boolean()
-    .optional(),
+  isVisible: z.boolean().optional(),
 
-  isPublished: z
-    .boolean()
-    .optional(),
+  isPublished: z.boolean().optional(),
 });
 
-// ==========================================
 // CATEGORY STATUS VALIDATION
-// ==========================================
 
 const categoryStatusSchema = z.object({
   isVisible: z.boolean().optional(),
@@ -92,16 +55,13 @@ const categoryStatusSchema = z.object({
   isPublished: z.boolean().optional(),
 });
 
-// ==========================================
 // CATEGORY NOT FOUND RESPONSE
-// ==========================================
 
 function categoryNotFound() {
   return secureAdminResponse(
     NextResponse.json(
       {
         success: false,
-
         error: 'Category not found.',
       },
       {
@@ -111,23 +71,16 @@ function categoryNotFound() {
   );
 }
 
-// ==========================================
 // REFRESH CATEGORY AND PRODUCT DATA
-// ==========================================
 
 function refreshCategories() {
   refreshAdmin('/admin/categories');
-
   revalidatePath('/admin/products');
 }
 
-// ==========================================
 // CENTRALIZED CATEGORY ERROR HANDLING
-// ==========================================
 
-function handleCategoryError(
-  error: unknown
-) {
+function handleCategoryError(error: unknown) {
   if (
     typeof error === 'object' &&
     error !== null &&
@@ -138,9 +91,7 @@ function handleCategoryError(
       NextResponse.json(
         {
           success: false,
-
-          error:
-            'Category name or slug already exists.',
+          error: 'Category name or slug already exists.',
         },
         {
           status: 409,
@@ -149,28 +100,19 @@ function handleCategoryError(
     );
   }
 
-  return apiError(
-    error,
-    'Category'
-  );
+  return apiError(error, 'Category');
 }
 
-// ==========================================
 // GET INDIVIDUAL CATEGORY
-// ==========================================
 
 export async function GET(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    // AUTHENTICATION AND VIEW PERMISSION
-
     const denied = await adminDenied({
       request,
-
-      permission:
-        PERMISSIONS.CATEGORY_VIEW,
+      permission: PERMISSIONS.CATEGORY_VIEW,
     });
 
     if (denied) {
@@ -179,22 +121,17 @@ export async function GET(
 
     const { id } = await params;
 
-    // FETCH CATEGORY WITH RELATED PRODUCTS
+    const category = await prisma.category.findUnique({
+      where: { id },
 
-    const category =
-      await prisma.category.findUnique({
-        where: {
-          id,
-        },
-
-        include: {
-          productCategories: {
-            include: {
-              product: true,
-            },
+      include: {
+        productCategories: {
+          include: {
+            product: true,
           },
         },
-      });
+      },
+    });
 
     if (!category) {
       return categoryNotFound();
@@ -203,7 +140,6 @@ export async function GET(
     return secureAdminResponse(
       NextResponse.json({
         success: true,
-
         category,
       })
     );
@@ -213,89 +149,115 @@ export async function GET(
   }
 }
 
-// ==========================================
 // UPDATE CATEGORY
 // OWNER AND ADMIN ONLY
-// ==========================================
 
 export async function PUT(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    // ======================================
-    // AUTHENTICATION, CSRF AND PERMISSIONS
-    // ======================================
-
-    const denied = await adminDenied({
+    const authorization = await authorizeAdmin({
       request,
-
-      permission:
-        PERMISSIONS.CATEGORY_MANAGE,
+      permission: PERMISSIONS.CATEGORY_MANAGE,
     });
 
-    if (denied) {
-      return denied;
+    if (!authorization.ok) {
+      return authorization.response;
     }
 
+    const admin = authorization.user;
     const { id } = await params;
-
-    // ======================================
-    // VALIDATE REQUEST BODY
-    // ======================================
 
     const body = await request
       .json()
       .catch(() => null);
 
-    const parsed =
-      updateCategorySchema.safeParse(body);
+    const parsed = updateCategorySchema.safeParse(body);
 
     if (!parsed.success) {
       return badInput(
         'Invalid category data.',
-
         z.flattenError(parsed.error)
       );
     }
 
-    // ======================================
-    // REJECT EMPTY UPDATE REQUESTS
-    // ======================================
-
-    if (
-      Object.keys(parsed.data).length === 0
-    ) {
+    if (Object.keys(parsed.data).length === 0) {
       return badInput(
         'Provide at least one category field to update.'
       );
     }
 
-    // ======================================
-    // UPDATE CATEGORY
-    // ======================================
+    // ATOMIC CATEGORY UPDATE AND AUDIT LOGGING
 
-    const category =
-      await prisma.category.update({
-        where: {
-          id,
-        },
+    const category = await prisma.$transaction(
+      async (tx) => {
 
-        data: parsed.data,
-      });
+        const existing = await tx.category.findUnique({
+          where: { id },
 
-    // REFRESH WEBSITE AND ADMIN PANEL
+          select: {
+            isVisible: true,
+            isPublished: true,
+          },
+        });
+
+        if (!existing) {
+          return null;
+        }
+
+        const updatedCategory = await tx.category.update({
+          where: { id },
+          data: parsed.data,
+        });
+
+        // RECORD CATEGORY UPDATE
+
+        await recordAdminAction(
+          admin,
+          {
+            action: AUDIT_ACTIONS.CATEGORY_UPDATED,
+            entityType: AUDIT_ENTITIES.CATEGORY,
+            entityId: id,
+          },
+          tx
+        );
+
+        // RECORD VISIBILITY OR PUBLICATION CHANGE
+
+        if (
+          existing.isVisible !== updatedCategory.isVisible ||
+          existing.isPublished !== updatedCategory.isPublished
+        ) {
+          await recordAdminAction(
+            admin,
+            {
+              action:
+                AUDIT_ACTIONS.CATEGORY_VISIBILITY_CHANGED,
+
+              entityType: AUDIT_ENTITIES.CATEGORY,
+
+              entityId: id,
+            },
+            tx
+          );
+        }
+
+        return updatedCategory;
+      }
+    );
+
+    if (!category) {
+      return categoryNotFound();
+    }
 
     refreshCategories();
 
     return secureAdminResponse(
       NextResponse.json({
         success: true,
-
         category,
-
-        message:
-          'Category updated successfully.',
+        message: 'Category updated successfully.',
       })
     );
 
@@ -304,43 +266,31 @@ export async function PUT(
   }
 }
 
-// ==========================================
 // CATEGORY VISIBILITY AND PUBLISH STATUS
 // OWNER AND ADMIN ONLY
-// ==========================================
 
 export async function PATCH(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    // ======================================
-    // AUTHENTICATION, CSRF AND PERMISSIONS
-    // ======================================
-
-    const denied = await adminDenied({
+    const authorization = await authorizeAdmin({
       request,
-
-      permission:
-        PERMISSIONS.CATEGORY_MANAGE,
+      permission: PERMISSIONS.CATEGORY_MANAGE,
     });
 
-    if (denied) {
-      return denied;
+    if (!authorization.ok) {
+      return authorization.response;
     }
 
+    const admin = authorization.user;
     const { id } = await params;
-
-    // ======================================
-    // VALIDATE STATUS UPDATE
-    // ======================================
 
     const body = await request
       .json()
       .catch(() => null);
 
-    const parsed =
-      categoryStatusSchema.safeParse(body);
+    const parsed = categoryStatusSchema.safeParse(body);
 
     if (
       !parsed.success ||
@@ -351,29 +301,64 @@ export async function PATCH(
       );
     }
 
-    // ======================================
-    // UPDATE CATEGORY STATUS
-    // ======================================
+    // ATOMIC STATUS UPDATE AND AUDIT LOGGING
 
-    const category =
-      await prisma.category.update({
-        where: {
-          id,
-        },
+    const category = await prisma.$transaction(
+      async (tx) => {
 
-        data: parsed.data,
-      });
+        const existing = await tx.category.findUnique({
+          where: { id },
+
+          select: {
+            isVisible: true,
+            isPublished: true,
+          },
+        });
+
+        if (!existing) {
+          return null;
+        }
+
+        const updatedCategory = await tx.category.update({
+          where: { id },
+          data: parsed.data,
+        });
+
+        // RECORD ACTUAL STATUS CHANGE
+
+        if (
+          existing.isVisible !== updatedCategory.isVisible ||
+          existing.isPublished !== updatedCategory.isPublished
+        ) {
+          await recordAdminAction(
+            admin,
+            {
+              action:
+                AUDIT_ACTIONS.CATEGORY_VISIBILITY_CHANGED,
+
+              entityType: AUDIT_ENTITIES.CATEGORY,
+
+              entityId: id,
+            },
+            tx
+          );
+        }
+
+        return updatedCategory;
+      }
+    );
+
+    if (!category) {
+      return categoryNotFound();
+    }
 
     refreshCategories();
 
     return secureAdminResponse(
       NextResponse.json({
         success: true,
-
         category,
-
-        message:
-          'Category status updated.',
+        message: 'Category status updated.',
       })
     );
 
@@ -382,120 +367,91 @@ export async function PATCH(
   }
 }
 
-// ==========================================
 // SAFE PERMANENT CATEGORY DELETION
 // OWNER AND ADMIN ONLY
-// ==========================================
 
 export async function DELETE(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    // ======================================
-    // AUTHENTICATION, CSRF AND PERMISSIONS
-    // ======================================
-
-    const denied = await adminDenied({
+    const authorization = await authorizeAdmin({
       request,
-
-      permission:
-        PERMISSIONS.CATEGORY_MANAGE,
+      permission: PERMISSIONS.CATEGORY_MANAGE,
     });
 
-    if (denied) {
-      return denied;
+    if (!authorization.ok) {
+      return authorization.response;
     }
 
+    const admin = authorization.user;
     const { id } = await params;
 
-    // ======================================
-    // ATOMIC DATABASE TRANSACTION
-    // ======================================
+    // ATOMIC CATEGORY DELETION AND AUDIT LOGGING
 
-    const deleted =
-      await prisma.$transaction(
-        async (tx) => {
+    const deleted = await prisma.$transaction(
+      async (tx) => {
 
-          // FETCH CATEGORY AND PRODUCT COUNT
+        const category = await tx.category.findUnique({
+          where: { id },
 
-          const category =
-            await tx.category.findUnique({
-              where: {
-                id,
-              },
+          select: {
+            name: true,
+          },
+        });
 
-              select: {
-                name: true,
+        if (!category) {
+          return null;
+        }
 
-                _count: {
-                  select: {
-                    productCategories: true,
-                  },
-                },
-              },
-            });
+        // REMOVE CATEGORY ASSIGNMENTS ONLY
+        // NEVER DELETE ACTUAL PRODUCTS
 
-          if (!category) {
-            return null;
-          }
-
-          // ==================================
-          // REMOVE CATEGORY ASSIGNMENTS ONLY
-          // NEVER DELETE ACTUAL PRODUCTS
-          // ==================================
-
+        const removedAssignments =
           await tx.productCategory.deleteMany({
             where: {
               categoryId: id,
             },
           });
 
-          // DELETE CATEGORY
+        // DELETE CATEGORY
 
-          await tx.category.delete({
-            where: {
-              id,
-            },
-          });
+        await tx.category.delete({
+          where: { id },
+        });
 
-          return {
-            name: category.name,
+        // RECORD PERMANENT CATEGORY DELETION
 
-            affectedProducts:
-              category._count.productCategories,
-          };
-        }
-      );
+        await recordAdminAction(
+          admin,
+          {
+            action: AUDIT_ACTIONS.CATEGORY_DELETED,
+            entityType: AUDIT_ENTITIES.CATEGORY,
+            entityId: id,
+          },
+          tx
+        );
+
+        return {
+          name: category.name,
+          affectedProducts: removedAssignments.count,
+        };
+      }
+    );
 
     if (!deleted) {
       return categoryNotFound();
     }
 
-    // ======================================
-    // REFRESH WEBSITE AND ADMIN PANEL
-    // ======================================
-
     refreshCategories();
-
-    // ======================================
-    // SECURE SUCCESS RESPONSE
-    // ======================================
 
     return secureAdminResponse(
       NextResponse.json({
         success: true,
-
         deleted: true,
-
         deletedProductCount: 0,
-
-        categoryName:
-          deleted.name,
-
-        affectedProducts:
-          deleted.affectedProducts,
-
+        categoryName: deleted.name,
+        affectedProducts: deleted.affectedProducts,
         message:
           'Category permanently deleted. Products preserved.',
       })

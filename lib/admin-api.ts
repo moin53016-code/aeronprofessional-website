@@ -8,6 +8,7 @@ import {
 import { revalidatePath } from 'next/cache';
 
 import { getSession } from '@/lib/auth';
+
 import { csrfGuard } from '@/lib/csrf';
 
 import {
@@ -17,11 +18,31 @@ import {
   hasAnyPermission,
 } from '@/lib/permissions';
 
-import type { Permission } from '@/lib/permissions';
-import type { Role } from '@/generated/prisma/enums';
+import type {
+  Permission,
+} from '@/lib/permissions';
+
+import type {
+  Role,
+} from '@/generated/prisma/enums';
+
+import {
+  createAuditLog,
+  writeAuditLog,
+} from '@/lib/audit-log';
+
+import type {
+  AuditAction,
+  AuditEntity,
+  AuditReason,
+} from '@/lib/audit-log';
+
+import type {
+  Prisma,
+} from '@/generated/prisma/client';
 
 // ==========================================
-// SECURITY TYPES
+// ADMIN SECURITY OPTIONS
 // ==========================================
 
 interface AdminSecurityOptions {
@@ -37,12 +58,59 @@ interface AdminSecurityOptions {
 }
 
 // ==========================================
+// VERIFIED ADMIN USER TYPE
+// ==========================================
+
+export interface VerifiedAdminUser {
+  id: string;
+
+  email: string;
+
+  name: string;
+
+  role: Role;
+
+  isActive: boolean;
+}
+
+// ==========================================
+// ADMIN AUTHORIZATION RESULT
+// ==========================================
+
+export type AdminAuthorizationResult =
+  | {
+      ok: true;
+
+      user: VerifiedAdminUser;
+    }
+  | {
+      ok: false;
+
+      response: NextResponse;
+    };
+
+// ==========================================
+// ADMIN AUDIT EVENT TYPE
+// ==========================================
+
+interface AdminAuditEvent {
+  action: AuditAction;
+
+  entityType?: AuditEntity;
+
+  entityId?: string | null;
+
+  reason?: AuditReason;
+}
+
+// ==========================================
 // SECURE RESPONSE HEADERS
 // ==========================================
 
 export function secureAdminResponse(
   response: NextResponse
 ): NextResponse {
+
   response.headers.set(
     'Cache-Control',
     'no-store, no-cache, must-revalidate, private'
@@ -76,12 +144,14 @@ export function secureAdminResponse(
 // ==========================================
 
 export function unauthorizedResponse() {
+
   return secureAdminResponse(
     NextResponse.json(
       {
         success: false,
 
-        error: 'Unauthorized. Please log in.',
+        error:
+          'Unauthorized. Please log in.',
       },
       {
         status: 401,
@@ -95,6 +165,7 @@ export function unauthorizedResponse() {
 // ==========================================
 
 export function forbiddenResponse() {
+
   return secureAdminResponse(
     NextResponse.json(
       {
@@ -111,23 +182,38 @@ export function forbiddenResponse() {
 }
 
 // ==========================================
-// AUTHENTICATION AND AUTHORIZATION
+// CENTRALIZED ADMIN AUTHORIZATION
+//
+// RETURNS:
+// - VERIFIED ADMIN USER
+// OR
+// - SECURE ERROR RESPONSE
+//
+// NEVER RETURNS RAW SESSION TOKENS.
 // ==========================================
 
-export async function adminDenied(
+export async function authorizeAdmin(
   options: AdminSecurityOptions = {}
-): Promise<NextResponse | null> {
+): Promise<AdminAuthorizationResult> {
+
   // ========================================
   // VERIFY REQUEST ORIGIN
   // ========================================
 
   if (options.request) {
-    const denied = csrfGuard(
-      options.request
-    );
+
+    const denied =
+      csrfGuard(options.request);
 
     if (denied) {
-      return secureAdminResponse(denied);
+
+      return {
+        ok: false,
+
+        response:
+          secureAdminResponse(denied),
+      };
+
     }
   }
 
@@ -135,10 +221,18 @@ export async function adminDenied(
   // VERIFY DATABASE SESSION
   // ========================================
 
-  const session = await getSession();
+  const session =
+    await getSession();
 
   if (!session) {
-    return unauthorizedResponse();
+
+    return {
+      ok: false,
+
+      response:
+        unauthorizedResponse(),
+    };
+
   }
 
   // ========================================
@@ -146,17 +240,32 @@ export async function adminDenied(
   // ========================================
 
   if (!session.user.isActive) {
-    return unauthorizedResponse();
+
+    return {
+      ok: false,
+
+      response:
+        unauthorizedResponse(),
+    };
+
   }
 
-  const role = session.user.role;
+  const role =
+    session.user.role;
 
   // ========================================
   // REJECT INVALID ADMIN ROLES
   // ========================================
 
   if (!isValidRole(role)) {
-    return forbiddenResponse();
+
+    return {
+      ok: false,
+
+      response:
+        forbiddenResponse(),
+    };
+
   }
 
   // ========================================
@@ -167,7 +276,14 @@ export async function adminDenied(
     options.allowedRoles &&
     !options.allowedRoles.includes(role)
   ) {
-    return forbiddenResponse();
+
+    return {
+      ok: false,
+
+      response:
+        forbiddenResponse(),
+    };
+
   }
 
   // ========================================
@@ -181,7 +297,14 @@ export async function adminDenied(
       options.permission
     )
   ) {
-    return forbiddenResponse();
+
+    return {
+      ok: false,
+
+      response:
+        forbiddenResponse(),
+    };
+
   }
 
   // ========================================
@@ -189,6 +312,7 @@ export async function adminDenied(
   // ========================================
 
   if (options.permissions) {
+
     const permitted =
       options.permissionMode === 'any'
         ? hasAnyPermission(
@@ -201,15 +325,144 @@ export async function adminDenied(
           );
 
     if (!permitted) {
-      return forbiddenResponse();
+
+      return {
+        ok: false,
+
+        response:
+          forbiddenResponse(),
+      };
+
     }
   }
 
   // ========================================
-  // AUTHORIZED REQUEST
+  // RETURN SAFE VERIFIED ADMIN INFORMATION
+  //
+  // NEVER RETURN PASSWORD HASHES,
+  // JWT TOKENS OR SESSION COOKIES.
   // ========================================
 
+  return {
+    ok: true,
+
+    user: {
+      id:
+        session.user.id,
+
+      email:
+        session.user.email,
+
+      name:
+        session.user.name,
+
+      role,
+
+      isActive:
+        session.user.isActive,
+    },
+  };
+}
+
+// ==========================================
+// BACKWARD-COMPATIBLE ADMIN SECURITY GUARD
+//
+// EXISTING ADMIN API ROUTES CAN CONTINUE
+// USING adminDenied() WITHOUT MODIFICATION.
+// ==========================================
+
+export async function adminDenied(
+  options: AdminSecurityOptions = {}
+): Promise<NextResponse | null> {
+
+  const authorization =
+    await authorizeAdmin(options);
+
+  if (!authorization.ok) {
+
+    return authorization.response;
+
+  }
+
   return null;
+}
+
+// ==========================================
+// MANDATORY ADMIN ACTION AUDIT LOGGING
+//
+// SUPPORTS DATABASE TRANSACTIONS.
+//
+// WHEN USED WITH THE SAME TRANSACTION,
+// BOTH THE DATABASE MUTATION AND AUDIT
+// RECORD MUST SUCCEED TOGETHER.
+// ==========================================
+
+export async function recordAdminAction(
+  user: VerifiedAdminUser,
+
+  event: AdminAuditEvent,
+
+  database?: Pick<
+    Prisma.TransactionClient,
+    'auditLog'
+  >
+): Promise<void> {
+
+  await createAuditLog(
+    {
+      adminId:
+        user.id,
+
+      action:
+        event.action,
+
+      entityType:
+        event.entityType,
+
+      entityId:
+        event.entityId,
+
+      reason:
+        event.reason,
+    },
+
+    database
+  );
+}
+
+// ==========================================
+// BEST-EFFORT ADMIN ACTION AUDIT LOGGING
+//
+// USE FOR OPERATIONS WHERE AUDIT FAILURE
+// MUST NOT INTERRUPT THE MAIN OPERATION.
+//
+// DO NOT USE AS A SUBSTITUTE FOR
+// TRANSACTIONAL AUDIT LOGGING WHEN
+// ATOMIC DATABASE CHANGES ARE REQUIRED.
+// ==========================================
+
+export async function recordAdminActionSafely(
+  user: VerifiedAdminUser,
+
+  event: AdminAuditEvent
+): Promise<boolean> {
+
+  return writeAuditLog({
+    adminId:
+      user.id,
+
+    action:
+      event.action,
+
+    entityType:
+      event.entityType,
+
+    entityId:
+      event.entityId,
+
+    reason:
+      event.reason,
+  });
 }
 
 // ==========================================
@@ -218,8 +471,10 @@ export async function adminDenied(
 
 export function badInput(
   error = 'Invalid input',
+
   details?: unknown
 ) {
+
   return secureAdminResponse(
     NextResponse.json(
       {
@@ -243,12 +498,15 @@ export function badInput(
 function getDatabaseErrorCode(
   error: unknown
 ): string | undefined {
+
   if (
     !error ||
     typeof error !== 'object' ||
     !('code' in error)
   ) {
+
     return undefined;
+
   }
 
   const code = error.code;
@@ -257,7 +515,9 @@ function getDatabaseErrorCode(
     typeof code === 'string' &&
     /^P[0-9]{4}$/.test(code)
   ) {
+
     return code;
+
   }
 
   return undefined;
@@ -269,17 +529,22 @@ function getDatabaseErrorCode(
 
 export function apiError(
   error: unknown,
+
   resource: string
 ) {
+
   const code =
     getDatabaseErrorCode(error);
 
+  // ========================================
   // SAFE ERROR LOGGING
+  // ========================================
 
   console.error(
     `[ADMIN API] ${resource} request failed.`,
     {
-      code: code ?? 'UNKNOWN',
+      code:
+        code ?? 'UNKNOWN',
     }
   );
 
@@ -288,18 +553,21 @@ export function apiError(
   // ========================================
 
   if (code === 'P2025') {
+
     return secureAdminResponse(
       NextResponse.json(
         {
           success: false,
 
-          error: `${resource} not found`,
+          error:
+            `${resource} not found`,
         },
         {
           status: 404,
         }
       )
     );
+
   }
 
   // ========================================
@@ -307,6 +575,7 @@ export function apiError(
   // ========================================
 
   if (code === 'P2002') {
+
     return secureAdminResponse(
       NextResponse.json(
         {
@@ -320,6 +589,7 @@ export function apiError(
         }
       )
     );
+
   }
 
   // ========================================
@@ -327,9 +597,11 @@ export function apiError(
   // ========================================
 
   if (code === 'P2003') {
+
     return badInput(
       'One or more related records no longer exist. Refresh and try again.'
     );
+
   }
 
   // ========================================
@@ -342,6 +614,7 @@ export function apiError(
     code === 'P1017' ||
     code === 'P2024'
   ) {
+
     return secureAdminResponse(
       NextResponse.json(
         {
@@ -355,6 +628,7 @@ export function apiError(
         }
       )
     );
+
   }
 
   // ========================================
@@ -383,7 +657,11 @@ export function apiError(
 export function refreshAdmin(
   path: string
 ) {
+
   revalidatePath('/');
+
   revalidatePath('/admin');
+
   revalidatePath(path);
+
 }

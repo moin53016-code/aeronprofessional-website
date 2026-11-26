@@ -1,33 +1,28 @@
-import {
-  NextRequest,
-  NextResponse,
-} from 'next/server';
-
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-
 import { z } from 'zod';
 
 import { PERMISSIONS } from '@/lib/permissions';
 
 import {
   adminDenied,
+  authorizeAdmin,
+  recordAdminAction,
   apiError,
   badInput,
   refreshAdmin,
   secureAdminResponse,
 } from '@/lib/admin-api';
 
-// ==========================================
-// ROUTE CONFIGURATION
-// ==========================================
+import {
+  AUDIT_ACTIONS,
+  AUDIT_ENTITIES,
+} from '@/lib/audit-log';
 
 export const dynamic = 'force-dynamic';
-
 export const revalidate = 0;
 
-// ==========================================
 // FAQ VALIDATION
-// ==========================================
 
 const createFaqSchema = z.object({
   question: z
@@ -42,160 +37,123 @@ const createFaqSchema = z.object({
     .min(1, 'Answer is required')
     .max(10000),
 
-  displayOrder: z
-    .number()
-    .int()
-    .default(0),
+  displayOrder: z.number().int().default(0),
 
-  isActive: z
-    .boolean()
-    .default(true),
+  isActive: z.boolean().default(true),
 });
 
-// ==========================================
 // GET ALL FAQS
-// ==========================================
 
-export async function GET(
-  request: NextRequest
-) {
+export async function GET(request: NextRequest) {
   try {
-    // ======================================
-    // AUTHENTICATION AND VIEW PERMISSION
-    // ======================================
-
     const denied = await adminDenied({
       request,
-
-      permission:
-        PERMISSIONS.FAQ_VIEW,
+      permission: PERMISSIONS.FAQ_VIEW,
     });
 
     if (denied) {
       return denied;
     }
-
-    // ======================================
-    // FETCH ALL FAQS
-    // ======================================
 
     const faqs = await prisma.fAQ.findMany({
       orderBy: [
         {
           displayOrder: 'asc',
         },
-
         {
           createdAt: 'desc',
         },
       ],
     });
 
-    // ======================================
-    // SECURE SUCCESS RESPONSE
-    // ======================================
-
     return secureAdminResponse(
       NextResponse.json({
         success: true,
-
         faqs,
       })
     );
 
   } catch (error) {
-    return apiError(
-      error,
-      'FAQ'
-    );
+    return apiError(error, 'FAQ');
   }
 }
 
-// ==========================================
 // CREATE NEW FAQ
-// ==========================================
 
-export async function POST(
-  request: NextRequest
-) {
+export async function POST(request: NextRequest) {
   try {
-    // ======================================
-    // AUTHENTICATION, CSRF AND PERMISSIONS
-    // ======================================
 
-    const denied = await adminDenied({
+    // VERIFY ADMIN AND FAQ MANAGEMENT PERMISSION
+
+    const authorization = await authorizeAdmin({
       request,
-
-      permission:
-        PERMISSIONS.FAQ_MANAGE,
+      permission: PERMISSIONS.FAQ_MANAGE,
     });
 
-    if (denied) {
-      return denied;
+    if (!authorization.ok) {
+      return authorization.response;
     }
 
-    // ======================================
-    // PARSE REQUEST BODY
-    // ======================================
+    const admin = authorization.user;
+
+    // VALIDATE REQUEST BODY
 
     const body = await request
       .json()
       .catch(() => null);
 
-    // ======================================
-    // VALIDATE FAQ INPUT
-    // ======================================
-
-    const parsed =
-      createFaqSchema.safeParse(body);
+    const parsed = createFaqSchema.safeParse(body);
 
     if (!parsed.success) {
       return badInput(
         'Invalid FAQ data.',
-
         z.flattenError(parsed.error)
       );
     }
 
-    // ======================================
-    // CREATE FAQ DATABASE RECORD
-    // ======================================
+    // ATOMIC FAQ CREATION AND AUDIT LOGGING
 
-    const faq = await prisma.fAQ.create({
-      data: {
-        question:
-          parsed.data.question,
+    const faq = await prisma.$transaction(
+      async (tx) => {
 
-        answer:
-          parsed.data.answer,
+        const createdFaq = await tx.fAQ.create({
+          data: {
+            question: parsed.data.question,
 
-        displayOrder:
-          parsed.data.displayOrder,
+            answer: parsed.data.answer,
 
-        isActive:
-          parsed.data.isActive,
-      },
-    });
+            displayOrder: parsed.data.displayOrder,
 
-    // ======================================
+            isActive: parsed.data.isActive,
+          },
+        });
+
+        // RECORD VERIFIED ADMIN ACTIVITY
+
+        await recordAdminAction(
+          admin,
+          {
+            action: AUDIT_ACTIONS.FAQ_CREATED,
+            entityType: AUDIT_ENTITIES.FAQ,
+            entityId: createdFaq.id,
+          },
+          tx
+        );
+
+        return createdFaq;
+      }
+    );
+
     // REFRESH STOREFRONT AND ADMIN PANEL
-    // ======================================
 
     refreshAdmin('/admin/content');
-
-    // ======================================
-    // SECURE SUCCESS RESPONSE
-    // ======================================
 
     return secureAdminResponse(
       NextResponse.json(
         {
           success: true,
-
           faq,
-
-          message:
-            'FAQ created successfully.',
+          message: 'FAQ created successfully.',
         },
         {
           status: 201,
@@ -204,9 +162,6 @@ export async function POST(
     );
 
   } catch (error) {
-    return apiError(
-      error,
-      'FAQ'
-    );
+    return apiError(error, 'FAQ');
   }
 }

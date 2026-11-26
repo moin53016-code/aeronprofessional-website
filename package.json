@@ -12,7 +12,9 @@
     "db:migrate:prod": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
-    "admin:setup": "tsx scripts/setup-admin.ts"
+    "admin:setup": "tsx scripts/setup-admin.ts",
+    "admin:cleanup": "tsx scripts/cleanup-admin-security.ts",
+    "admin:cleanup:apply": "tsx scripts/cleanup-admin-security.ts --apply"
   },
   "dependencies": {
     "@neondatabase/serverless": "1.2.1",
@@ -30,7 +32,7 @@
   },
   "devDependencies": {
     "@opennextjs/cloudflare": "^1.20.18",
-    "@types/bcryptjs": "^3.0.0",
+    "@types/bcryptjs": "^4.0.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "autoprefixer": "^10.4.0",

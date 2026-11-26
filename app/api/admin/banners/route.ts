@@ -1,33 +1,28 @@
-import {
-  NextRequest,
-  NextResponse,
-} from 'next/server';
-
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-
 import { z } from 'zod';
 
 import { PERMISSIONS } from '@/lib/permissions';
 
 import {
   adminDenied,
+  authorizeAdmin,
+  recordAdminAction,
   apiError,
   badInput,
   refreshAdmin,
   secureAdminResponse,
 } from '@/lib/admin-api';
 
-// ==========================================
-// ROUTE CONFIGURATION
-// ==========================================
+import {
+  AUDIT_ACTIONS,
+  AUDIT_ENTITIES,
+} from '@/lib/audit-log';
 
 export const dynamic = 'force-dynamic';
-
 export const revalidate = 0;
 
-// ==========================================
 // IMAGE URL VALIDATION
-// ==========================================
 
 const imageUrlSchema = z.string().trim().refine(
   (value) => {
@@ -52,28 +47,14 @@ const imageUrlSchema = z.string().trim().refine(
   'Enter a valid image URL or local image path.'
 );
 
-// ==========================================
 // BANNER VALIDATION
-// ==========================================
 
 const createBannerSchema = z.object({
-  eyebrow: z
-    .string()
-    .trim()
-    .min(1)
-    .max(200),
+  eyebrow: z.string().trim().min(1).max(200),
 
-  title: z
-    .string()
-    .trim()
-    .min(1)
-    .max(500),
+  title: z.string().trim().min(1).max(500),
 
-  description: z
-    .string()
-    .trim()
-    .min(1)
-    .max(5000),
+  description: z.string().trim().min(1).max(5000),
 
   imageUrl: imageUrlSchema,
 
@@ -94,14 +75,9 @@ const createBannerSchema = z.object({
     .max(200)
     .default('Shop All'),
 
-  displayOrder: z
-    .number()
-    .int()
-    .default(0),
+  displayOrder: z.number().int().default(0),
 
-  isActive: z
-    .boolean()
-    .default(true),
+  isActive: z.boolean().default(true),
 
   startsAt: z
     .string()
@@ -116,108 +92,71 @@ const createBannerSchema = z.object({
     .optional(),
 });
 
-// ==========================================
 // GET ALL HOMEPAGE BANNERS
-// ==========================================
 
-export async function GET(
-  request: NextRequest
-) {
+export async function GET(request: NextRequest) {
   try {
-    // ======================================
-    // AUTHENTICATION AND VIEW PERMISSION
-    // ======================================
-
     const denied = await adminDenied({
       request,
-
-      permission:
-        PERMISSIONS.BANNER_VIEW,
+      permission: PERMISSIONS.BANNER_VIEW,
     });
 
     if (denied) {
       return denied;
     }
 
-    // ======================================
-    // FETCH HOMEPAGE BANNERS
-    // ======================================
-
-    const banners =
-      await prisma.homepageBanner.findMany({
-        orderBy: [
-          {
-            displayOrder: 'asc',
-          },
-
-          {
-            createdAt: 'desc',
-          },
-        ],
-      });
-
-    // ======================================
-    // SECURE SUCCESS RESPONSE
-    // ======================================
+    const banners = await prisma.homepageBanner.findMany({
+      orderBy: [
+        {
+          displayOrder: 'asc',
+        },
+        {
+          createdAt: 'desc',
+        },
+      ],
+    });
 
     return secureAdminResponse(
       NextResponse.json({
         success: true,
-
         banners,
       })
     );
 
   } catch (error) {
-    return apiError(
-      error,
-      'Banner'
-    );
+    return apiError(error, 'Banner');
   }
 }
 
-// ==========================================
 // CREATE NEW HOMEPAGE BANNER
-// ==========================================
 
-export async function POST(
-  request: NextRequest
-) {
+export async function POST(request: NextRequest) {
   try {
-    // ======================================
-    // AUTHENTICATION, CSRF AND PERMISSIONS
-    // ======================================
 
-    const denied = await adminDenied({
+    // VERIFY ADMIN AND BANNER MANAGEMENT PERMISSION
+
+    const authorization = await authorizeAdmin({
       request,
-
-      permission:
-        PERMISSIONS.BANNER_MANAGE,
+      permission: PERMISSIONS.BANNER_MANAGE,
     });
 
-    if (denied) {
-      return denied;
+    if (!authorization.ok) {
+      return authorization.response;
     }
 
-    // ======================================
-    // PARSE REQUEST BODY
-    // ======================================
+    const admin = authorization.user;
+
+    // VALIDATE REQUEST BODY
 
     const body = await request
       .json()
       .catch(() => null);
 
-    // ======================================
-    // VALIDATE BANNER INPUT
-    // ======================================
-
-    const parsed =
-      createBannerSchema.safeParse(body);
+    const parsed = createBannerSchema.safeParse(body);
 
     if (!parsed.success) {
       return badInput(
         'Invalid banner data.',
-
         z.flattenError(parsed.error)
       );
     }
@@ -229,9 +168,7 @@ export async function POST(
       ...data
     } = parsed.data;
 
-    // ======================================
     // VALIDATE BANNER SCHEDULE
-    // ======================================
 
     const startDate = startsAt
       ? new Date(startsAt)
@@ -251,49 +188,53 @@ export async function POST(
       );
     }
 
-    // ======================================
-    // CREATE HOMEPAGE BANNER
-    // ======================================
+    // ATOMIC BANNER CREATION AND AUDIT LOGGING
 
-    const banner =
-      await prisma.homepageBanner.create({
-        data: {
-          ...data,
+    const banner = await prisma.$transaction(
+      async (tx) => {
 
-          mobileImageUrl:
-            mobileImageUrl || null,
+        const createdBanner = await tx.homepageBanner.create({
+          data: {
+            ...data,
 
-          buttonLabel:
-            data.buttonLabel || 'SHOP NOW',
+            mobileImageUrl: mobileImageUrl || null,
 
-          buttonTarget:
-            data.buttonTarget || 'Shop All',
+            buttonLabel: data.buttonLabel || 'SHOP NOW',
 
-          startsAt: startDate,
+            buttonTarget: data.buttonTarget || 'Shop All',
 
-          endsAt: endDate,
-        },
-      });
+            startsAt: startDate,
 
-    // ======================================
+            endsAt: endDate,
+          },
+        });
+
+        // RECORD VERIFIED ADMIN ACTIVITY
+
+        await recordAdminAction(
+          admin,
+          {
+            action: AUDIT_ACTIONS.BANNER_CREATED,
+            entityType: AUDIT_ENTITIES.BANNER,
+            entityId: createdBanner.id,
+          },
+          tx
+        );
+
+        return createdBanner;
+      }
+    );
+
     // REFRESH WEBSITE AND ADMIN PANEL
-    // ======================================
 
     refreshAdmin('/admin/banners');
-
-    // ======================================
-    // SECURE SUCCESS RESPONSE
-    // ======================================
 
     return secureAdminResponse(
       NextResponse.json(
         {
           success: true,
-
           banner,
-
-          message:
-            'Homepage banner created successfully.',
+          message: 'Homepage banner created successfully.',
         },
         {
           status: 201,
@@ -302,9 +243,6 @@ export async function POST(
     );
 
   } catch (error) {
-    return apiError(
-      error,
-      'Banner'
-    );
+    return apiError(error, 'Banner');
   }
 }

@@ -1,82 +1,141 @@
+import type { Metadata } from 'next';
 
-import type { Metadata, Viewport } from 'next';
-import './globals.css';
+import { headers } from 'next/headers';
 
-// GLOBAL WEBSITE METADATA
+import AdminSidebar from '@/components/admin/AdminSidebar';
+
+import AdminHeader from '@/components/admin/AdminHeader';
+
+import {
+  requireAdminPage,
+} from '@/lib/admin-page';
+
+// ==========================================
+// ADMIN ROUTE CONFIGURATION
+// ==========================================
+
+export const dynamic = 'force-dynamic';
+
+export const revalidate = 0;
+
+// ==========================================
+// ADMIN PAGE SEO PROTECTION
+// ==========================================
 
 export const metadata: Metadata = {
-  title: {
-    default:
-      'AERON PROFESSIONAL',
+  title: 'Admin',
 
-    template:
-      '%s | AERON PROFESSIONAL',
-  },
+  robots: {
+    index: false,
 
-  description:
-    'Discover professional-inspired hair dryers, straighteners, trimming tools and salon styling essentials from AERON PROFESSIONAL.',
+    follow: false,
 
-  applicationName:
-    'AERON PROFESSIONAL',
+    nocache: true,
 
-  // GLOBAL WEBSITE ICONS
+    googleBot: {
+      index: false,
 
-  icons: {
-    icon: [
-      {
-        url: '/aeron-favicon.ico?v=2',
-        type: 'image/x-icon',
-        sizes: '16x16 32x32 48x48',
-      },
-      {
-        url: '/aeron-icon.png?v=2',
-        type: 'image/png',
-        sizes: '512x512',
-      },
-    ],
+      follow: false,
 
-    shortcut: [
-      {
-        url: '/aeron-favicon.ico?v=2',
-        type: 'image/x-icon',
-      },
-    ],
-
-    apple: [
-      {
-        url: '/aeron-apple-icon.png?v=2',
-        sizes: '180x180',
-        type: 'image/png',
-      },
-    ],
+      noimageindex: true,
+    },
   },
 };
 
-// GLOBAL VIEWPORT CONFIGURATION
+// ==========================================
+// ADMIN LAYOUT
+// ==========================================
 
-export const viewport: Viewport = {
-  width: 'device-width',
-
-  initialScale: 1,
-
-  themeColor: '#171717',
-};
-
-// ROOT WEBSITE LAYOUT
-
-export default function RootLayout({
+export default async function AdminLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+}) {
+
+  // ========================================
+  // READ TRUSTED MIDDLEWARE REQUEST HEADERS
+  // ========================================
+
+  const requestHeaders =
+    await headers();
+
+  // ========================================
+  // IDENTIFY ADMIN LOGIN PAGE
+  // ========================================
+
+  const isLoginPage =
+    requestHeaders.get(
+      'x-aeron-login-page'
+    ) === 'true';
+
+  // ========================================
+  // LOGIN PAGE DOES NOT REQUIRE A SESSION
+  // ========================================
+
+  if (isLoginPage) {
+    return <>{children}</>;
+  }
+
+  // ========================================
+  // CENTRALIZED ADMIN SESSION VERIFICATION
+  //
+  // VERIFY:
+  // - VALID SESSION
+  // - ACTIVE ADMIN ACCOUNT
+  // - VALID ADMIN ROLE
+  // ========================================
+
+  const session =
+    await requireAdminPage();
+
+  // ========================================
+  // EXTRACT SAFE ADMIN USER INFORMATION
+  // FROM VERIFIED DATABASE SESSION
+  // ========================================
+
+  const adminUser = {
+    name: session.user.name,
+
+    email: session.user.email,
+
+    role: session.user.role,
+  };
+
+  // ========================================
+  // RENDER PROTECTED ADMIN PANEL
+  // ========================================
+
   return (
-    <html
-      lang="en"
-      suppressHydrationWarning
-    >
-      <body>
-        {children}
-      </body>
-    </html>
+    <div className="flex min-h-screen bg-gray-50">
+
+      {/* ==================================
+          ROLE-BASED ADMIN SIDEBAR
+          ================================== */}
+
+      <AdminSidebar
+        role={adminUser.role}
+      />
+
+      {/* ADMIN MAIN CONTAINER */}
+
+      <div className="flex min-w-0 flex-1 flex-col">
+
+        {/* VERIFIED ADMIN HEADER */}
+
+        <AdminHeader
+          user={adminUser}
+        />
+
+        {/* PROTECTED ADMIN PAGE CONTENT */}
+
+        <main className="min-w-0 flex-1 overflow-auto p-4 sm:p-6">
+
+          {children}
+
+        </main>
+
+      </div>
+
+    </div>
   );
 }

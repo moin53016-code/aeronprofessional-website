@@ -1,33 +1,28 @@
-import {
-  NextRequest,
-  NextResponse,
-} from 'next/server';
-
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-
 import { z } from 'zod';
 
 import { PERMISSIONS } from '@/lib/permissions';
 
 import {
   adminDenied,
+  authorizeAdmin,
+  recordAdminAction,
   apiError,
   badInput,
   refreshAdmin,
   secureAdminResponse,
 } from '@/lib/admin-api';
 
-// ==========================================
-// ROUTE CONFIGURATION
-// ==========================================
+import {
+  AUDIT_ACTIONS,
+  AUDIT_ENTITIES,
+} from '@/lib/audit-log';
 
 export const dynamic = 'force-dynamic';
-
 export const revalidate = 0;
 
-// ==========================================
 // MARKETPLACE VALIDATION
-// ==========================================
 
 const marketplaceSchema = z.object({
   name: z
@@ -76,7 +71,6 @@ const marketplaceSchema = z.object({
             !url.username &&
             !url.password
           );
-
         } catch {
           return false;
         }
@@ -85,109 +79,89 @@ const marketplaceSchema = z.object({
     ),
 });
 
-// ==========================================
+// DUPLICATE MARKETPLACE RESPONSE
+
+function duplicateMarketplace() {
+  return secureAdminResponse(
+    NextResponse.json(
+      {
+        success: false,
+        error:
+          'A marketplace with this name or slug already exists.',
+      },
+      {
+        status: 409,
+      }
+    )
+  );
+}
+
 // GET ALL MARKETPLACES
-// ==========================================
 
-export async function GET(
-  request: NextRequest
-) {
+export async function GET(request: NextRequest) {
   try {
-    // ======================================
-    // AUTHENTICATION AND VIEW PERMISSION
-    // ======================================
-
     const denied = await adminDenied({
       request,
-
-      permission:
-        PERMISSIONS.MARKETPLACE_VIEW,
+      permission: PERMISSIONS.MARKETPLACE_VIEW,
     });
 
     if (denied) {
       return denied;
     }
 
-    // ======================================
-    // FETCH ALL MARKETPLACES
-    // ======================================
-
-    const marketplaces =
-      await prisma.marketplace.findMany({
-        orderBy: [
-          {
-            createdAt: 'asc',
-          },
-
-          {
-            id: 'asc',
-          },
-        ],
-      });
-
-    // ======================================
-    // SECURE SUCCESS RESPONSE
-    // ======================================
+    const marketplaces = await prisma.marketplace.findMany({
+      orderBy: [
+        {
+          createdAt: 'asc',
+        },
+        {
+          id: 'asc',
+        },
+      ],
+    });
 
     return secureAdminResponse(
       NextResponse.json({
         success: true,
-
         marketplaces,
       })
     );
 
   } catch (error) {
-    return apiError(
-      error,
-      'Marketplace'
-    );
+    return apiError(error, 'Marketplace');
   }
 }
 
-// ==========================================
 // CREATE NEW MARKETPLACE
 // OWNER AND ADMIN ONLY
-// ==========================================
 
-export async function POST(
-  request: NextRequest
-) {
+export async function POST(request: NextRequest) {
   try {
-    // ======================================
-    // AUTHENTICATION, CSRF AND PERMISSIONS
-    // ======================================
 
-    const denied = await adminDenied({
+    // VERIFY ADMIN AND MARKETPLACE PERMISSION
+
+    const authorization = await authorizeAdmin({
       request,
-
-      permission:
-        PERMISSIONS.MARKETPLACE_MANAGE,
+      permission: PERMISSIONS.MARKETPLACE_MANAGE,
     });
 
-    if (denied) {
-      return denied;
+    if (!authorization.ok) {
+      return authorization.response;
     }
 
-    // ======================================
-    // PARSE REQUEST BODY
-    // ======================================
+    const admin = authorization.user;
+
+    // VALIDATE REQUEST BODY
 
     const body = await request
       .json()
       .catch(() => null);
 
-    // ======================================
-    // VALIDATE MARKETPLACE INPUT
-    // ======================================
-
-    const parsed =
-      marketplaceSchema.safeParse(body);
+    const parsed = marketplaceSchema.safeParse(body);
 
     if (!parsed.success) {
       return badInput(
         'Invalid marketplace information.',
-
         z.flattenError(parsed.error)
       );
     }
@@ -200,87 +174,78 @@ export async function POST(
       url,
     } = parsed.data;
 
-    // ======================================
-    // CHECK FOR DUPLICATE MARKETPLACE
-    // ======================================
+    // ATOMIC MARKETPLACE CREATION AND AUDIT LOGGING
 
-    const existingMarketplace =
-      await prisma.marketplace.findFirst({
-        where: {
-          OR: [
-            {
+    const marketplace = await prisma.$transaction(
+      async (tx) => {
+
+        // CHECK FOR DUPLICATE MARKETPLACE
+
+        const existingMarketplace =
+          await tx.marketplace.findFirst({
+            where: {
+              OR: [
+                {
+                  slug,
+                },
+                {
+                  name: {
+                    equals: name,
+                    mode: 'insensitive',
+                  },
+                },
+              ],
+            },
+          });
+
+        if (existingMarketplace) {
+          return null;
+        }
+
+        // CREATE MARKETPLACE
+
+        const createdMarketplace =
+          await tx.marketplace.create({
+            data: {
+              name,
               slug,
+              badgeText: badgeText || null,
+              tagline: tagline || null,
+              url,
+              isActive: true,
             },
+          });
 
-            {
-              name: {
-                equals: name,
+        // RECORD VERIFIED ADMIN ACTIVITY
 
-                mode: 'insensitive',
-              },
-            },
-          ],
-        },
-      });
-
-    if (existingMarketplace) {
-      return secureAdminResponse(
-        NextResponse.json(
+        await recordAdminAction(
+          admin,
           {
-            success: false,
-
-            error:
-              'A marketplace with this name or slug already exists.',
+            action: AUDIT_ACTIONS.MARKETPLACE_CREATED,
+            entityType: AUDIT_ENTITIES.MARKETPLACE,
+            entityId: createdMarketplace.id,
           },
-          {
-            status: 409,
-          }
-        )
-      );
+          tx
+        );
+
+        return createdMarketplace;
+      }
+    );
+
+    if (!marketplace) {
+      return duplicateMarketplace();
     }
 
-    // ======================================
-    // CREATE MARKETPLACE
-    // ======================================
-
-    const marketplace =
-      await prisma.marketplace.create({
-        data: {
-          name,
-
-          slug,
-
-          badgeText:
-            badgeText || null,
-
-          tagline:
-            tagline || null,
-
-          url,
-
-          isActive: true,
-        },
-      });
-
-    // ======================================
     // REFRESH STOREFRONT AND ADMIN PANEL
-    // ======================================
 
     refreshAdmin('/admin/marketplaces');
-
-    // ======================================
-    // SECURE SUCCESS RESPONSE
-    // ======================================
 
     return secureAdminResponse(
       NextResponse.json(
         {
           success: true,
-
           marketplace,
-
-          message:
-            'Marketplace created successfully.',
+          message: 'Marketplace created successfully.',
         },
         {
           status: 201,
@@ -289,9 +254,18 @@ export async function POST(
     );
 
   } catch (error) {
-    return apiError(
-      error,
-      'Marketplace'
-    );
+
+    // HANDLE DATABASE UNIQUE CONSTRAINT VIOLATION
+
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      error.code === 'P2002'
+    ) {
+      return duplicateMarketplace();
+    }
+
+    return apiError(error, 'Marketplace');
   }
 }

@@ -1,56 +1,37 @@
-import {
-  NextRequest,
-  NextResponse,
-} from 'next/server';
-
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-
 import { z } from 'zod';
 
 import { PERMISSIONS } from '@/lib/permissions';
 
 import {
   adminDenied,
+  authorizeAdmin,
+  recordAdminAction,
   apiError,
   badInput,
   refreshAdmin,
   secureAdminResponse,
 } from '@/lib/admin-api';
 
-// ==========================================
-// ROUTE CONFIGURATION
-// ==========================================
+import {
+  AUDIT_ACTIONS,
+  AUDIT_ENTITIES,
+} from '@/lib/audit-log';
 
 export const dynamic = 'force-dynamic';
-
 export const revalidate = 0;
 
-// ==========================================
 // DISCOUNT CAMPAIGN VALIDATION
-// ==========================================
 
 const createDiscountSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1)
-    .max(200),
+  name: z.string().trim().min(1).max(200),
 
-  description: z
-    .string()
-    .trim()
-    .nullable()
-    .optional(),
+  description: z.string().trim().nullable().optional(),
 
-  discountLabel: z
-    .string()
-    .trim()
-    .nullable()
-    .optional(),
+  discountLabel: z.string().trim().nullable().optional(),
 
-  isActive: z
-    .boolean()
-    .default(true),
+  isActive: z.boolean().default(true),
 
   startsAt: z
     .string()
@@ -69,127 +50,85 @@ const createDiscountSchema = z.object({
     .default([]),
 });
 
-// ==========================================
 // GET ALL DISCOUNT CAMPAIGNS
-// ==========================================
 
-export async function GET(
-  request: NextRequest
-) {
+export async function GET(request: NextRequest) {
   try {
-    // ======================================
-    // AUTHENTICATION AND VIEW PERMISSION
-    // ======================================
-
     const denied = await adminDenied({
       request,
-
-      permission:
-        PERMISSIONS.DISCOUNT_VIEW,
+      permission: PERMISSIONS.DISCOUNT_VIEW,
     });
 
     if (denied) {
       return denied;
     }
 
-    // ======================================
-    // FETCH DISCOUNT CAMPAIGNS
-    // ======================================
-
-    const discounts =
-      await prisma.discountCampaign.findMany({
-        include: {
-          discountProducts: {
-            include: {
-              product: {
-                select: {
-                  id: true,
-
-                  name: true,
-
-                  slug: true,
-
-                  priceInPaise: true,
-
-                  originalPriceInPaise: true,
-
-                  primaryImageUrl: true,
-
-                  status: true,
-                },
+    const discounts = await prisma.discountCampaign.findMany({
+      include: {
+        discountProducts: {
+          include: {
+            product: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                priceInPaise: true,
+                originalPriceInPaise: true,
+                primaryImageUrl: true,
+                status: true,
               },
             },
           },
         },
+      },
 
-        orderBy: {
-          createdAt: 'desc',
-        },
-      });
-
-    // ======================================
-    // SECURE SUCCESS RESPONSE
-    // ======================================
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
 
     return secureAdminResponse(
       NextResponse.json({
         success: true,
-
         discounts,
       })
     );
 
   } catch (error) {
-    return apiError(
-      error,
-      'Discount campaign'
-    );
+    return apiError(error, 'Discount campaign');
   }
 }
 
-// ==========================================
 // CREATE DISCOUNT CAMPAIGN
 // OWNER AND ADMIN ONLY
-// ==========================================
 
-export async function POST(
-  request: NextRequest
-) {
+export async function POST(request: NextRequest) {
   try {
-    // ======================================
-    // AUTHENTICATION, CSRF AND PERMISSIONS
-    // ======================================
 
-    const denied = await adminDenied({
+    // VERIFY ADMIN AND DISCOUNT MANAGEMENT PERMISSION
+
+    const authorization = await authorizeAdmin({
       request,
-
-      permission:
-        PERMISSIONS.DISCOUNT_MANAGE,
+      permission: PERMISSIONS.DISCOUNT_MANAGE,
     });
 
-    if (denied) {
-      return denied;
+    if (!authorization.ok) {
+      return authorization.response;
     }
 
-    // ======================================
-    // PARSE REQUEST BODY
-    // ======================================
+    const admin = authorization.user;
+
+    // VALIDATE REQUEST BODY
 
     const body = await request
       .json()
       .catch(() => null);
 
-    // ======================================
-    // VALIDATE DISCOUNT CAMPAIGN INPUT
-    // ======================================
-
-    const parsed =
-      createDiscountSchema.safeParse(body);
+    const parsed = createDiscountSchema.safeParse(body);
 
     if (!parsed.success) {
       return badInput(
         'Invalid discount campaign data.',
-
         z.flattenError(parsed.error)
       );
     }
@@ -201,9 +140,7 @@ export async function POST(
       ...data
     } = parsed.data;
 
-    // ======================================
     // VALIDATE CAMPAIGN SCHEDULE
-    // ======================================
 
     const startDate = startsAt
       ? new Date(startsAt)
@@ -223,92 +160,106 @@ export async function POST(
       );
     }
 
-    // ======================================
-    // PREVENT DUPLICATE PRODUCT ASSIGNMENTS
-    // ======================================
+    // REMOVE DUPLICATE PRODUCT ASSIGNMENTS
 
     const uniqueProductIds = [
       ...new Set(productIds),
     ];
 
-    // ======================================
-    // VERIFY SELECTED PRODUCTS EXIST
-    // ======================================
+    // ATOMIC DISCOUNT CREATION AND AUDIT LOGGING
 
-    if (uniqueProductIds.length > 0) {
-      const existingProducts =
-        await prisma.product.count({
-          where: {
-            id: {
-              in: uniqueProductIds,
+    const result = await prisma.$transaction(
+      async (tx) => {
+
+        // VERIFY SELECTED PRODUCTS EXIST
+
+        if (uniqueProductIds.length > 0) {
+          const existingProducts = await tx.product.count({
+            where: {
+              id: {
+                in: uniqueProductIds,
+              },
+            },
+          });
+
+          if (
+            existingProducts !== uniqueProductIds.length
+          ) {
+            return {
+              outcome: 'INVALID_PRODUCTS' as const,
+            };
+          }
+        }
+
+        // CREATE DISCOUNT CAMPAIGN
+
+        const discount = await tx.discountCampaign.create({
+          data: {
+            ...data,
+
+            description: data.description || null,
+
+            discountLabel: data.discountLabel || null,
+
+            startsAt: startDate,
+
+            endsAt: endDate,
+
+            discountProducts: {
+              create: uniqueProductIds.map(
+                (productId) => ({
+                  productId,
+                })
+              ),
+            },
+          },
+
+          include: {
+            discountProducts: {
+              include: {
+                product: true,
+              },
             },
           },
         });
 
-      if (
-        existingProducts !==
-        uniqueProductIds.length
-      ) {
-        return badInput(
-          'One or more selected products no longer exist.'
+        // RECORD VERIFIED ADMIN ACTIVITY
+
+        await recordAdminAction(
+          admin,
+          {
+            action: AUDIT_ACTIONS.DISCOUNT_CREATED,
+            entityType: AUDIT_ENTITIES.DISCOUNT,
+            entityId: discount.id,
+          },
+          tx
         );
+
+        return {
+          outcome: 'CREATED' as const,
+          discount,
+        };
       }
+    );
+
+    // HANDLE INVALID PRODUCT ASSIGNMENTS
+
+    if (result.outcome === 'INVALID_PRODUCTS') {
+      return badInput(
+        'One or more selected products no longer exist.'
+      );
     }
 
-    // ======================================
-    // CREATE DISCOUNT CAMPAIGN
-    // AND PRODUCT ASSOCIATIONS
-    // ======================================
-
-    const discount =
-      await prisma.discountCampaign.create({
-        data: {
-          ...data,
-
-          description:
-            data.description || null,
-
-          discountLabel:
-            data.discountLabel || null,
-
-          startsAt: startDate,
-
-          endsAt: endDate,
-
-          discountProducts: {
-            create: uniqueProductIds.map(
-              (productId) => ({
-                productId,
-              })
-            ),
-          },
-        },
-
-        include: {
-          discountProducts: {
-            include: {
-              product: true,
-            },
-          },
-        },
-      });
-
-    // ======================================
     // REFRESH WEBSITE AND ADMIN PANEL
-    // ======================================
 
     refreshAdmin('/admin/discounts');
-
-    // ======================================
-    // SECURE SUCCESS RESPONSE
-    // ======================================
 
     return secureAdminResponse(
       NextResponse.json(
         {
           success: true,
 
-          discount,
+          discount: result.discount,
 
           message:
             'Discount campaign created successfully.',
@@ -320,9 +271,6 @@ export async function POST(
     );
 
   } catch (error) {
-    return apiError(
-      error,
-      'Discount campaign'
-    );
+    return apiError(error, 'Discount campaign');
   }
 }

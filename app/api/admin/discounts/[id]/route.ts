@@ -1,63 +1,41 @@
-import {
-  NextRequest,
-  NextResponse,
-} from 'next/server';
-
+import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { prisma } from '@/lib/db';
-
 import { PERMISSIONS } from '@/lib/permissions';
 
 import {
   adminDenied,
+  authorizeAdmin,
+  recordAdminAction,
   apiError,
   badInput,
   refreshAdmin,
   secureAdminResponse,
 } from '@/lib/admin-api';
 
-// ==========================================
-// ROUTE CONFIGURATION
-// ==========================================
+import {
+  AUDIT_ACTIONS,
+  AUDIT_ENTITIES,
+} from '@/lib/audit-log';
 
 export const dynamic = 'force-dynamic';
-
 export const revalidate = 0;
-
-// ==========================================
-// ROUTE CONTEXT
-// ==========================================
 
 type Context = {
   params: Promise<{ id: string }>;
 };
 
-// ==========================================
 // DISCOUNT UPDATE VALIDATION
-// ==========================================
 
 const updateSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1)
-    .max(200)
-    .optional(),
+  name: z.string().trim().min(1).max(200).optional(),
 
-  description: z
-    .string()
-    .nullable()
-    .optional(),
+  description: z.string().nullable().optional(),
 
-  discountLabel: z
-    .string()
-    .nullable()
-    .optional(),
+  discountLabel: z.string().nullable().optional(),
 
-  isActive: z
-    .boolean()
-    .optional(),
+  isActive: z.boolean().optional(),
 
   startsAt: z
     .string()
@@ -76,17 +54,13 @@ const updateSchema = z.object({
     .optional(),
 });
 
-// ==========================================
 // DISCOUNT STATUS VALIDATION
-// ==========================================
 
 const statusSchema = z.object({
   isActive: z.boolean(),
 });
 
-// ==========================================
 // INCLUDE RELATED PRODUCTS
-// ==========================================
 
 const includeProducts = {
   discountProducts: {
@@ -96,16 +70,13 @@ const includeProducts = {
   },
 } as const;
 
-// ==========================================
 // DISCOUNT NOT FOUND RESPONSE
-// ==========================================
 
 function discountNotFound() {
   return secureAdminResponse(
     NextResponse.json(
       {
         success: false,
-
         error: 'Discount campaign not found.',
       },
       {
@@ -115,61 +86,41 @@ function discountNotFound() {
   );
 }
 
-// ==========================================
 // CENTRALIZED DISCOUNT ERROR HANDLING
-// ==========================================
 
-function handleDiscountError(
-  error: unknown
-) {
+function handleDiscountError(error: unknown) {
   if (error instanceof Error) {
-    if (
-      error.message === 'CAMPAIGN_NOT_FOUND'
-    ) {
+
+    if (error.message === 'CAMPAIGN_NOT_FOUND') {
       return discountNotFound();
     }
 
-    if (
-      error.message === 'INVALID_DATE_RANGE'
-    ) {
+    if (error.message === 'INVALID_DATE_RANGE') {
       return badInput(
         'End date must not be before start date.'
       );
     }
 
-    if (
-      error.message === 'INVALID_PRODUCTS'
-    ) {
+    if (error.message === 'INVALID_PRODUCTS') {
       return badInput(
         'One or more selected products no longer exist.'
       );
     }
   }
 
-  return apiError(
-    error,
-    'Discount campaign'
-  );
+  return apiError(error, 'Discount campaign');
 }
 
-// ==========================================
 // GET INDIVIDUAL DISCOUNT CAMPAIGN
-// ==========================================
 
 export async function GET(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    // ======================================
-    // AUTHENTICATION AND VIEW PERMISSION
-    // ======================================
-
     const denied = await adminDenied({
       request,
-
-      permission:
-        PERMISSIONS.DISCOUNT_VIEW,
+      permission: PERMISSIONS.DISCOUNT_VIEW,
     });
 
     if (denied) {
@@ -178,31 +129,18 @@ export async function GET(
 
     const { id } = await params;
 
-    // ======================================
-    // FETCH CAMPAIGN AND RELATED PRODUCTS
-    // ======================================
-
-    const discount =
-      await prisma.discountCampaign.findUnique({
-        where: {
-          id,
-        },
-
-        include: includeProducts,
-      });
+    const discount = await prisma.discountCampaign.findUnique({
+      where: { id },
+      include: includeProducts,
+    });
 
     if (!discount) {
       return discountNotFound();
     }
 
-    // ======================================
-    // SECURE SUCCESS RESPONSE
-    // ======================================
-
     return secureAdminResponse(
       NextResponse.json({
         success: true,
-
         discount,
       })
     );
@@ -212,61 +150,42 @@ export async function GET(
   }
 }
 
-// ==========================================
 // UPDATE DISCOUNT CAMPAIGN
 // OWNER AND ADMIN ONLY
-// ==========================================
 
 export async function PUT(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    // ======================================
-    // AUTHENTICATION, CSRF AND PERMISSIONS
-    // ======================================
-
-    const denied = await adminDenied({
+    const authorization = await authorizeAdmin({
       request,
-
-      permission:
-        PERMISSIONS.DISCOUNT_MANAGE,
+      permission: PERMISSIONS.DISCOUNT_MANAGE,
     });
 
-    if (denied) {
-      return denied;
+    if (!authorization.ok) {
+      return authorization.response;
     }
 
+    const admin = authorization.user;
     const { id } = await params;
 
-    // ======================================
-    // PARSE REQUEST BODY
-    // ======================================
+    // VALIDATE REQUEST BODY
 
     const body = await request
       .json()
       .catch(() => null);
 
-    // ======================================
-    // VALIDATE UPDATE INPUT
-    // ======================================
-
-    const parsed =
-      updateSchema.safeParse(body);
+    const parsed = updateSchema.safeParse(body);
 
     if (!parsed.success) {
       return badInput(
         'Invalid discount campaign data.',
-
         z.flattenError(parsed.error)
       );
     }
 
-    // REJECT EMPTY UPDATE REQUESTS
-
-    if (
-      Object.keys(parsed.data).length === 0
-    ) {
+    if (Object.keys(parsed.data).length === 0) {
       return badInput(
         'No discount campaign changes provided.'
       );
@@ -279,179 +198,164 @@ export async function PUT(
       ...data
     } = parsed.data;
 
-    // ======================================
     // PREVENT DUPLICATE PRODUCT ASSIGNMENTS
-    // ======================================
 
     const uniqueProductIds =
       productIds === undefined
         ? undefined
         : [...new Set(productIds)];
 
-    // ======================================
-    // ATOMIC DATABASE TRANSACTION
-    // ======================================
+    // ATOMIC DISCOUNT UPDATE AND AUDIT LOGGING
 
-    const discount =
-      await prisma.$transaction(
-        async (tx) => {
+    const discount = await prisma.$transaction(
+      async (tx) => {
 
-          // FETCH EXISTING CAMPAIGN
+        // FETCH EXISTING CAMPAIGN
 
-          const existing =
-            await tx.discountCampaign.findUnique({
-              where: {
-                id,
-              },
-            });
+        const existing = await tx.discountCampaign.findUnique({
+          where: { id },
+        });
 
-          if (!existing) {
-            throw new Error(
-              'CAMPAIGN_NOT_FOUND'
-            );
-          }
+        if (!existing) {
+          throw new Error('CAMPAIGN_NOT_FOUND');
+        }
 
-          // ==================================
-          // PRESERVE EXISTING CAMPAIGN DATES
-          // ==================================
+        // PRESERVE EXISTING CAMPAIGN DATES
 
-          const startDate =
-            startsAt === undefined
-              ? existing.startsAt
-              : startsAt
-                ? new Date(startsAt)
-                : null;
+        const startDate =
+          startsAt === undefined
+            ? existing.startsAt
+            : startsAt
+              ? new Date(startsAt)
+              : null;
 
-          const endDate =
-            endsAt === undefined
-              ? existing.endsAt
-              : endsAt
-                ? new Date(endsAt)
-                : null;
+        const endDate =
+          endsAt === undefined
+            ? existing.endsAt
+            : endsAt
+              ? new Date(endsAt)
+              : null;
 
-          // ==================================
-          // VALIDATE CAMPAIGN DATE RANGE
-          // ==================================
+        // VALIDATE CAMPAIGN SCHEDULE
 
-          if (
-            startDate &&
-            endDate &&
-            endDate < startDate
-          ) {
-            throw new Error(
-              'INVALID_DATE_RANGE'
-            );
-          }
+        if (
+          startDate &&
+          endDate &&
+          endDate < startDate
+        ) {
+          throw new Error('INVALID_DATE_RANGE');
+        }
 
-          // ==================================
-          // VERIFY SELECTED PRODUCTS EXIST
-          // ==================================
+        // VERIFY SELECTED PRODUCTS EXIST
 
-          if (
-            uniqueProductIds !== undefined &&
-            uniqueProductIds.length > 0
-          ) {
-            const existingProducts =
-              await tx.product.count({
-                where: {
-                  id: {
-                    in: uniqueProductIds,
-                  },
-                },
-              });
-
-            if (
-              existingProducts !==
-              uniqueProductIds.length
-            ) {
-              throw new Error(
-                'INVALID_PRODUCTS'
-              );
-            }
-          }
-
-          // ==================================
-          // UPDATE DISCOUNT CAMPAIGN
-          // ==================================
-
-          await tx.discountCampaign.update({
+        if (
+          uniqueProductIds !== undefined &&
+          uniqueProductIds.length > 0
+        ) {
+          const existingProducts = await tx.product.count({
             where: {
-              id,
+              id: {
+                in: uniqueProductIds,
+              },
             },
+          });
+
+          if (
+            existingProducts !== uniqueProductIds.length
+          ) {
+            throw new Error('INVALID_PRODUCTS');
+          }
+        }
+
+        // UPDATE CAMPAIGN DETAILS
+
+        const updatedCampaign =
+          await tx.discountCampaign.update({
+            where: { id },
 
             data: {
               ...data,
 
-              startsAt: startDate,
+              ...(startsAt !== undefined
+                ? { startsAt: startDate }
+                : {}),
 
-              endsAt: endDate,
+              ...(endsAt !== undefined
+                ? { endsAt: endDate }
+                : {}),
             },
           });
 
-          // ==================================
-          // UPDATE CAMPAIGN PRODUCT ASSIGNMENTS
-          // ==================================
+        // UPDATE CAMPAIGN PRODUCT ASSIGNMENTS
 
-          if (
-            uniqueProductIds !== undefined
-          ) {
-            // REMOVE PREVIOUS ASSIGNMENTS ONLY
+        if (uniqueProductIds !== undefined) {
 
-            await tx.discountProduct.deleteMany({
-              where: {
-                campaignId: id,
-              },
-            });
+          // REMOVE PREVIOUS ASSIGNMENTS ONLY
 
-            // CREATE UPDATED ASSIGNMENTS
-
-            if (
-              uniqueProductIds.length > 0
-            ) {
-              await tx.discountProduct.createMany({
-                data: uniqueProductIds.map(
-                  (productId) => ({
-                    campaignId: id,
-
-                    productId,
-                  })
-                ),
-              });
-            }
-          }
-
-          // ==================================
-          // RETURN UPDATED CAMPAIGN
-          // ==================================
-
-          return tx.discountCampaign.findUniqueOrThrow({
+          await tx.discountProduct.deleteMany({
             where: {
-              id,
+              campaignId: id,
             },
-
-            include: includeProducts,
           });
-        }
-      );
 
-    // ======================================
-    // REFRESH WEBSITE AND ADMIN PANEL
-    // ======================================
+          // CREATE UPDATED ASSIGNMENTS
+
+          if (uniqueProductIds.length > 0) {
+            await tx.discountProduct.createMany({
+              data: uniqueProductIds.map(
+                (productId) => ({
+                  campaignId: id,
+                  productId,
+                })
+              ),
+            });
+          }
+        }
+
+        // RECORD DISCOUNT UPDATE
+
+        await recordAdminAction(
+          admin,
+          {
+            action: AUDIT_ACTIONS.DISCOUNT_UPDATED,
+            entityType: AUDIT_ENTITIES.DISCOUNT,
+            entityId: id,
+          },
+          tx
+        );
+
+        // RECORD ACTIVATION OR DEACTIVATION
+
+        if (
+          existing.isActive !== updatedCampaign.isActive
+        ) {
+          await recordAdminAction(
+            admin,
+            {
+              action: AUDIT_ACTIONS.DISCOUNT_STATUS_CHANGED,
+              entityType: AUDIT_ENTITIES.DISCOUNT,
+              entityId: id,
+            },
+            tx
+          );
+        }
+
+        // RETURN UPDATED CAMPAIGN
+
+        return tx.discountCampaign.findUniqueOrThrow({
+          where: { id },
+          include: includeProducts,
+        });
+      }
+    );
 
     refreshAdmin('/admin/discounts');
-
-    // ======================================
-    // SECURE SUCCESS RESPONSE
-    // ======================================
 
     return secureAdminResponse(
       NextResponse.json({
         success: true,
-
         discount,
-
-        message:
-          'Discount campaign updated successfully.',
+        message: 'Discount campaign updated successfully.',
       })
     );
 
@@ -460,80 +364,90 @@ export async function PUT(
   }
 }
 
-// ==========================================
 // ACTIVATE / DEACTIVATE DISCOUNT CAMPAIGN
 // OWNER AND ADMIN ONLY
-// ==========================================
 
 export async function PATCH(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    // ======================================
-    // AUTHENTICATION, CSRF AND PERMISSIONS
-    // ======================================
-
-    const denied = await adminDenied({
+    const authorization = await authorizeAdmin({
       request,
-
-      permission:
-        PERMISSIONS.DISCOUNT_MANAGE,
+      permission: PERMISSIONS.DISCOUNT_MANAGE,
     });
 
-    if (denied) {
-      return denied;
+    if (!authorization.ok) {
+      return authorization.response;
     }
 
+    const admin = authorization.user;
     const { id } = await params;
-
-    // ======================================
-    // VALIDATE CAMPAIGN STATUS
-    // ======================================
 
     const body = await request
       .json()
       .catch(() => null);
 
-    const parsed =
-      statusSchema.safeParse(body);
+    const parsed = statusSchema.safeParse(body);
 
     if (!parsed.success) {
-      return badInput(
-        'Invalid campaign status.'
-      );
+      return badInput('Invalid campaign status.');
     }
 
-    // ======================================
-    // UPDATE CAMPAIGN STATUS
-    // ======================================
+    // ATOMIC STATUS UPDATE AND AUDIT LOGGING
 
-    const discount =
-      await prisma.discountCampaign.update({
-        where: {
-          id,
-        },
+    const discount = await prisma.$transaction(
+      async (tx) => {
 
-        data: {
-          isActive:
-            parsed.data.isActive,
-        },
+        const existing = await tx.discountCampaign.findUnique({
+          where: { id },
 
-        include: includeProducts,
-      });
+          select: {
+            isActive: true,
+          },
+        });
 
-    // ======================================
-    // REFRESH WEBSITE AND ADMIN PANEL
-    // ======================================
+        if (!existing) {
+          throw new Error('CAMPAIGN_NOT_FOUND');
+        }
+
+        const updatedCampaign =
+          await tx.discountCampaign.update({
+            where: { id },
+
+            data: {
+              isActive: parsed.data.isActive,
+            },
+
+            include: includeProducts,
+          });
+
+        // RECORD ACTUAL STATUS CHANGE
+
+        if (
+          existing.isActive !== updatedCampaign.isActive
+        ) {
+          await recordAdminAction(
+            admin,
+            {
+              action: AUDIT_ACTIONS.DISCOUNT_STATUS_CHANGED,
+              entityType: AUDIT_ENTITIES.DISCOUNT,
+              entityId: id,
+            },
+            tx
+          );
+        }
+
+        return updatedCampaign;
+      }
+    );
 
     refreshAdmin('/admin/discounts');
 
     return secureAdminResponse(
       NextResponse.json({
         success: true,
-
         discount,
-
         message:
           'Discount campaign status updated successfully.',
       })
@@ -544,60 +458,57 @@ export async function PATCH(
   }
 }
 
-// ==========================================
 // PERMANENTLY DELETE DISCOUNT CAMPAIGN
 // OWNER AND ADMIN ONLY
-// ==========================================
 
 export async function DELETE(
   request: NextRequest,
   { params }: Context
 ) {
   try {
-    // ======================================
-    // AUTHENTICATION, CSRF AND PERMISSIONS
-    // ======================================
-
-    const denied = await adminDenied({
+    const authorization = await authorizeAdmin({
       request,
-
-      permission:
-        PERMISSIONS.DISCOUNT_MANAGE,
+      permission: PERMISSIONS.DISCOUNT_MANAGE,
     });
 
-    if (denied) {
-      return denied;
+    if (!authorization.ok) {
+      return authorization.response;
     }
 
+    const admin = authorization.user;
     const { id } = await params;
 
-    // ======================================
-    // DELETE CAMPAIGN AND ITS ASSOCIATIONS
-    // NEVER DELETE ACTUAL PRODUCT RECORDS
-    // ======================================
+    // ATOMIC CAMPAIGN DELETION AND AUDIT LOGGING
 
-    await prisma.discountCampaign.delete({
-      where: {
-        id,
-      },
+    await prisma.$transaction(async (tx) => {
+
+      // DELETE CAMPAIGN AND ASSOCIATIONS
+      // NEVER DELETE ACTUAL PRODUCT RECORDS
+
+      await tx.discountCampaign.delete({
+        where: { id },
+      });
+
+      // RECORD VERIFIED ADMIN ACTIVITY
+
+      await recordAdminAction(
+        admin,
+        {
+          action: AUDIT_ACTIONS.DISCOUNT_DELETED,
+          entityType: AUDIT_ENTITIES.DISCOUNT,
+          entityId: id,
+        },
+        tx
+      );
+
     });
 
-    // ======================================
-    // REFRESH WEBSITE AND ADMIN PANEL
-    // ======================================
-
     refreshAdmin('/admin/discounts');
-
-    // ======================================
-    // SECURE SUCCESS RESPONSE
-    // ======================================
 
     return secureAdminResponse(
       NextResponse.json({
         success: true,
-
         deleted: true,
-
         message:
           'Discount campaign deleted. Products preserved.',
       })
