@@ -1,39 +1,80 @@
-
 import { prisma } from '@/lib/db';
-import { requireAdminPage } from '@/lib/admin-page';
+
+import {
+  requireAdminPage,
+} from '@/lib/admin-page';
+
+import {
+  PERMISSIONS,
+} from '@/lib/permissions';
 
 import SettingsForm from '@/components/admin/SettingsForm';
 
+// ==========================================
+// ROUTE CONFIGURATION
+// ==========================================
+
 export const dynamic = 'force-dynamic';
+
 export const revalidate = 0;
 
+// ==========================================
+// ADMIN WEBSITE SETTINGS PAGE
+// ==========================================
+
 export default async function SettingsPage() {
-  // VERIFY ADMIN SESSION
 
-  await requireAdminPage();
+  // ========================================
+  // SERVER-SIDE WEBSITE SETTINGS PERMISSIONS
+  //
+  // OWNER: ALLOWED
+  // ADMIN: ALLOWED
+  // EDITOR: DENIED
+  // ========================================
 
-  // LOAD WEBSITE SETTINGS
+  await requireAdminPage({
+    permissions: [
+      PERMISSIONS.SETTINGS_VIEW,
+      PERMISSIONS.SETTINGS_MANAGE,
+    ],
 
-  const rows = await prisma.siteSetting.findMany({
-    orderBy: {
-      key: 'asc',
-    },
-
-    select: {
-      key: true,
-      value: true,
-    },
+    permissionMode: 'all',
   });
 
+  // ========================================
+  // LOAD PROTECTED WEBSITE SETTINGS
+  // ONLY AFTER PERMISSION VERIFICATION
+  // ========================================
+
+  const rows =
+    await prisma.siteSetting.findMany({
+      orderBy: {
+        key: 'asc',
+      },
+
+      select: {
+        key: true,
+
+        value: true,
+      },
+    });
+
+  // ========================================
   // CONVERT DATABASE SETTINGS INTO FORM DATA
+  // ========================================
 
   const settings: Record<string, string> =
     Object.fromEntries(
       rows.map((row) => [
         row.key,
+
         row.value ?? '',
       ])
     );
+
+  // ========================================
+  // RENDER AUTHORIZED WEBSITE SETTINGS PAGE
+  // ========================================
 
   return (
     <div className="w-full min-w-0">
@@ -53,7 +94,7 @@ export default async function SettingsPage() {
 
       </div>
 
-      {/* WEBSITE SETTINGS FORM */}
+      {/* AUTHORIZED WEBSITE SETTINGS FORM */}
 
       <SettingsForm
         initialSettings={settings}

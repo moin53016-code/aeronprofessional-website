@@ -1,15 +1,32 @@
-
 import { notFound } from 'next/navigation';
+
 import Link from 'next/link';
+
 import { ArrowLeft } from 'lucide-react';
 
 import { prisma } from '@/lib/db';
-import { requireAdminPage } from '@/lib/admin-page';
+
+import {
+  requireAdminPage,
+} from '@/lib/admin-page';
+
+import {
+  PERMISSIONS,
+} from '@/lib/permissions';
 
 import ProductForm from '@/components/admin/ProductForm';
 
+// ==========================================
+// ROUTE CONFIGURATION
+// ==========================================
+
 export const dynamic = 'force-dynamic';
+
 export const revalidate = 0;
+
+// ==========================================
+// PAGE PROPS
+// ==========================================
 
 interface EditProductPageProps {
   params: Promise<{
@@ -17,25 +34,54 @@ interface EditProductPageProps {
   }>;
 }
 
+// ==========================================
+// EDIT PRODUCT PAGE
+// ==========================================
+
 export default async function EditProductPage({
   params,
 }: EditProductPageProps) {
-  // VERIFY ADMIN SESSION
 
-  await requireAdminPage();
+  // ========================================
+  // SERVER-SIDE PRODUCT EDITING PERMISSIONS
+  // ========================================
 
+  await requireAdminPage({
+    permissions: [
+      PERMISSIONS.PRODUCT_VIEW,
+      PERMISSIONS.PRODUCT_UPDATE,
+      PERMISSIONS.CATEGORY_VIEW,
+    ],
+
+    permissionMode: 'all',
+  });
+
+  // ========================================
   // GET PRODUCT ID
+  // ========================================
 
   const { id } = await params;
+
+  // ========================================
+  // VALIDATE PRODUCT ID
+  // ========================================
 
   if (!id || !id.trim()) {
     notFound();
   }
 
-  // LOAD PRODUCT AND CATEGORIES
+  // ========================================
+  // LOAD PROTECTED PRODUCT AND CATEGORY DATA
+  // ONLY AFTER PERMISSION VERIFICATION
+  // ========================================
 
   const [product, categories] =
     await Promise.all([
+
+      // ====================================
+      // FETCH EXISTING PRODUCT
+      // ====================================
+
       prisma.product.findUnique({
         where: {
           id,
@@ -47,6 +93,7 @@ export default async function EditProductPage({
               {
                 displayOrder: 'asc',
               },
+
               {
                 id: 'asc',
               },
@@ -58,6 +105,7 @@ export default async function EditProductPage({
               {
                 displayOrder: 'asc',
               },
+
               {
                 id: 'asc',
               },
@@ -72,12 +120,17 @@ export default async function EditProductPage({
         },
       }),
 
+      // ====================================
+      // FETCH AVAILABLE PRODUCT CATEGORIES
+      // ====================================
+
       prisma.category.findMany({
         where: {
           OR: [
             {
               isPublished: true,
             },
+
             {
               productCategories: {
                 some: {
@@ -92,6 +145,7 @@ export default async function EditProductPage({
           {
             displayOrder: 'asc',
           },
+
           {
             name: 'asc',
           },
@@ -99,11 +153,17 @@ export default async function EditProductPage({
       }),
     ]);
 
+  // ========================================
   // HANDLE DELETED OR NONEXISTENT PRODUCTS
+  // ========================================
 
   if (!product) {
     notFound();
   }
+
+  // ========================================
+  // RENDER AUTHORIZED PRODUCT EDIT PAGE
+  // ========================================
 
   return (
     <div className="w-full min-w-0">
@@ -114,9 +174,11 @@ export default async function EditProductPage({
         href="/admin/products"
         className="mb-5 inline-flex items-center gap-2 text-sm font-medium text-gray-500 transition-colors hover:text-black"
       >
+
         <ArrowLeft size={16} />
 
         Back to Products
+
       </Link>
 
       {/* PAGE HEADING */}
@@ -133,7 +195,7 @@ export default async function EditProductPage({
 
       </div>
 
-      {/* PRODUCT EDITING FORM */}
+      {/* AUTHORIZED PRODUCT EDITING FORM */}
 
       <ProductForm
         product={product}

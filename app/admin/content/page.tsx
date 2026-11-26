@@ -1,40 +1,89 @@
-
 import { prisma } from '@/lib/db';
-import { requireAdminPage } from '@/lib/admin-page';
+
+import {
+  requireAdminPage,
+} from '@/lib/admin-page';
+
+import {
+  PERMISSIONS,
+} from '@/lib/permissions';
 
 import FAQManager from '@/components/admin/FAQManager';
 
+// ==========================================
+// ROUTE CONFIGURATION
+// ==========================================
+
 export const dynamic = 'force-dynamic';
+
 export const revalidate = 0;
 
+// ==========================================
+// ADMIN CONTENT MANAGEMENT PAGE
+// ==========================================
+
 export default async function ContentPage() {
-  // VERIFY ADMIN SESSION
 
-  await requireAdminPage();
+  // ========================================
+  // SERVER-SIDE CONTENT AND FAQ PERMISSIONS
+  // ========================================
 
-  // LOAD FRESH FAQ DATA FROM DATABASE
-
-  const faqs = await prisma.fAQ.findMany({
-    orderBy: [
-      {
-        displayOrder: 'asc',
-      },
-      {
-        id: 'asc',
-      },
+  await requireAdminPage({
+    permissions: [
+      PERMISSIONS.CONTENT_VIEW,
+      PERMISSIONS.CONTENT_MANAGE,
+      PERMISSIONS.FAQ_VIEW,
+      PERMISSIONS.FAQ_MANAGE,
     ],
+
+    permissionMode: 'all',
   });
 
-  // CALCULATE FAQ STATISTICS
+  // ========================================
+  // LOAD PROTECTED FAQ DATA
+  // ONLY AFTER PERMISSION VERIFICATION
+  // ========================================
 
-  const totalFaqs = faqs.length;
+  const faqs =
+    await prisma.fAQ.findMany({
+      orderBy: [
+        {
+          displayOrder: 'asc',
+        },
 
-  const activeFaqs = faqs.filter(
-    (faq) => faq.isActive
-  ).length;
+        {
+          id: 'asc',
+        },
+      ],
+    });
+
+  // ========================================
+  // CALCULATE TOTAL FAQS
+  // ========================================
+
+  const totalFaqs =
+    faqs.length;
+
+  // ========================================
+  // CALCULATE ACTIVE FAQS
+  // ========================================
+
+  const activeFaqs =
+    faqs.filter(
+      (faq) =>
+        faq.isActive
+    ).length;
+
+  // ========================================
+  // CALCULATE INACTIVE FAQS
+  // ========================================
 
   const inactiveFaqs =
     totalFaqs - activeFaqs;
+
+  // ========================================
+  // RENDER AUTHORIZED CONTENT MANAGEMENT
+  // ========================================
 
   return (
     <div className="w-full min-w-0">
@@ -67,7 +116,9 @@ export default async function ContentPage() {
           </p>
 
           <p className="mt-2 text-2xl font-bold text-gray-900">
+
             {totalFaqs}
+
           </p>
 
         </div>
@@ -81,7 +132,9 @@ export default async function ContentPage() {
           </p>
 
           <p className="mt-2 text-2xl font-bold text-green-700">
+
             {activeFaqs}
+
           </p>
 
         </div>
@@ -95,14 +148,16 @@ export default async function ContentPage() {
           </p>
 
           <p className="mt-2 text-2xl font-bold text-gray-500">
+
             {inactiveFaqs}
+
           </p>
 
         </div>
 
       </div>
 
-      {/* FAQ MANAGEMENT COMPONENT */}
+      {/* AUTHORIZED FAQ MANAGEMENT COMPONENT */}
 
       <FAQManager
         initialFaqs={faqs}

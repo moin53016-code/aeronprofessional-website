@@ -1,54 +1,114 @@
-
 import { prisma } from '@/lib/db';
-import { requireAdminPage } from '@/lib/admin-page';
+
+import {
+  requireAdminPage,
+} from '@/lib/admin-page';
+
+import {
+  PERMISSIONS,
+} from '@/lib/permissions';
 
 import BannerList from '@/components/admin/BannerList';
 
+// ==========================================
+// ROUTE CONFIGURATION
+// ==========================================
+
 export const dynamic = 'force-dynamic';
+
 export const revalidate = 0;
 
+// ==========================================
+// ADMIN BANNERS PAGE
+// ==========================================
+
 export default async function BannersPage() {
-  // VERIFY ADMIN SESSION
 
-  await requireAdminPage();
+  // ========================================
+  // SERVER-SIDE BANNER PERMISSION CHECK
+  // ========================================
 
-  // LOAD FRESH BANNERS FROM DATABASE
-
-  const banners = await prisma.homepageBanner.findMany({
-    orderBy: [
-      {
-        displayOrder: 'asc',
-      },
-      {
-        createdAt: 'desc',
-      },
-      {
-        id: 'asc',
-      },
+  await requireAdminPage({
+    permissions: [
+      PERMISSIONS.BANNER_VIEW,
+      PERMISSIONS.BANNER_MANAGE,
     ],
+
+    permissionMode: 'all',
   });
 
-  // CALCULATE BANNER STATISTICS
+  // ========================================
+  // LOAD PROTECTED BANNER DATA
+  // ONLY AFTER PERMISSION VERIFICATION
+  // ========================================
+
+  const banners =
+    await prisma.homepageBanner.findMany({
+      orderBy: [
+        {
+          displayOrder: 'asc',
+        },
+
+        {
+          createdAt: 'desc',
+        },
+
+        {
+          id: 'asc',
+        },
+      ],
+    });
+
+  // ========================================
+  // CURRENT DATE AND TIME
+  // ========================================
 
   const now = new Date();
 
-  const totalBanners = banners.length;
+  // ========================================
+  // CALCULATE TOTAL BANNERS
+  // ========================================
 
-  const liveBanners = banners.filter(
-    (banner) =>
-      banner.isActive &&
-      (!banner.startsAt || banner.startsAt <= now) &&
-      (!banner.endsAt || banner.endsAt >= now)
-  ).length;
+  const totalBanners =
+    banners.length;
 
-  const scheduledBanners = banners.filter(
-    (banner) =>
-      banner.isActive &&
-      banner.startsAt !== null &&
-      banner.startsAt > now &&
-      (!banner.endsAt ||
-        banner.endsAt >= banner.startsAt)
-  ).length;
+  // ========================================
+  // CALCULATE CURRENTLY LIVE BANNERS
+  // ========================================
+
+  const liveBanners =
+    banners.filter(
+      (banner) =>
+        banner.isActive &&
+        (
+          !banner.startsAt ||
+          banner.startsAt <= now
+        ) &&
+        (
+          !banner.endsAt ||
+          banner.endsAt >= now
+        )
+    ).length;
+
+  // ========================================
+  // CALCULATE SCHEDULED BANNERS
+  // ========================================
+
+  const scheduledBanners =
+    banners.filter(
+      (banner) =>
+        banner.isActive &&
+        banner.startsAt !== null &&
+        banner.startsAt > now &&
+        (
+          !banner.endsAt ||
+          banner.endsAt >= banner.startsAt
+        )
+    ).length;
+
+  // ========================================
+  // RENDER AUTHORIZED BANNER MANAGEMENT PAGE
+  // ========================================
 
   return (
     <div className="w-full min-w-0">
@@ -116,7 +176,7 @@ export default async function BannersPage() {
 
       </div>
 
-      {/* BANNER MANAGEMENT */}
+      {/* AUTHORIZED BANNER MANAGEMENT */}
 
       <BannerList
         initialBanners={banners}

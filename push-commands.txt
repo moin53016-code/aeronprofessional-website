@@ -33,9 +33,6 @@ git push
 or 
 
 git add .
-
+git commit -m "Update admin API routes"
+git push origin main
 git status
-
-git commit -m "Merge GitHub main with local website updates"
-
-git push -u origin main
